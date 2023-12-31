@@ -9,7 +9,7 @@ use std::path::PathBuf;
 
 #[macro_export]
 macro_rules! qcow2_default_params {
-    ($ro: ident, $dio: ident) => {
+    ($ro: expr, $dio: expr) => {
         Qcow2DevParams::new(9, None, None, $ro, $dio)
     };
 }
