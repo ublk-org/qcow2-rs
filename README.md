@@ -15,12 +15,16 @@ allowed with tokio-uring
 - l2 table & refcount block slice load & store
 
 - block device like interface, minimized read/write unit is aligned with
-direct IO minimized block size of the qcow2 image
+block size of the FS qcow2 image
 
 This project is based on qcow2 implementation from `rsd`[^1]
 
-Motivation of this project is for supporting ublk-qcow2, but turns out it
+Motivation of this project is for supporting ublk-qcow2[^4], but turns out it
 becomes one generic async qcow2 library.
+
+Also one binary utility is shipped in this project, which can dump qcow2 meta,
+show any meta related statistics of the image, check image meta integrity &
+host cluster leak, format qcow2 image, ...
 
 ## Example
 
@@ -60,3 +64,4 @@ Any kinds of contributions are welcome!
 [^1]: <https://gitlab.com/hreitz/rsd/-/tree/main/src/node/qcow2?ref_type=heads>
 [^2]: <https://docs.rs/smol>
 [^3]: <https://docs.rs/io-uring>
+[^4]: <https://github.com/ming1/rublk/tree/qcow2>
