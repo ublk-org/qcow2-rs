@@ -1,6 +1,7 @@
 # qcow2-rs
 
 [![license](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/ming1/qcow2-rs/blob/master/LICENSE-MIT)
+[![license](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://github.com/ming1/qcow2-rs/blob/master/LICENSE-APACHE)
 
 Library in qcow2-rs is for reading/writing data from qcow2 image, and
 it supports the following features:
