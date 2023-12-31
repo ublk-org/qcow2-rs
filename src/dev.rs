@@ -1424,19 +1424,24 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         let info = &self.info;
         let compressed_offset = mapping.cluster_offset.unwrap();
         let compressed_length = mapping.compressed_length.unwrap();
-        let mut compressed_data = vec![0; compressed_length];
 
-        let res = self
-            .call_read(compressed_offset, &mut compressed_data)
-            .await?;
+        // for supporting dio, we have to run aligned IO
+        let bs = 1 << info.block_size_shift;
+        let bs_mask = !((1_u64 << info.block_size_shift) - 1);
+        let aligned_off = compressed_offset & bs_mask;
+        let pad = (compressed_offset - aligned_off) as usize;
+        let aligned_len = (pad + compressed_length + bs - 1) & (bs_mask as usize);
 
-        if res != compressed_length {
+        let mut _compressed_data = crate::page_aligned_vec!(u8, aligned_len);
+        let res = self.call_read(aligned_off, &mut _compressed_data).await?;
+        if res != aligned_len {
             return Err("do_read_compressed: short read compressed data".into());
         }
+        let compressed_data = &_compressed_data[pad..(pad + compressed_length)];
 
         let mut dec_ox = DecompressorOxide::new();
         if buf.len() == info.cluster_size() {
-            let (status, _read, _written) = inflate(&mut dec_ox, &compressed_data, buf, 0, 0);
+            let (status, _read, _written) = inflate(&mut dec_ox, compressed_data, buf, 0, 0);
             if status != TINFLStatus::Done && status != TINFLStatus::HasMoreOutput {
                 return Err(format!(
                     "Failed to decompress cluster (host offset 0x{:x}+{}): {:?}",
@@ -1446,8 +1451,9 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
             }
         } else {
             let mut uncompressed_data = vec![0; info.cluster_size()];
+
             let (status, _read, _written) =
-                inflate(&mut dec_ox, &compressed_data, &mut uncompressed_data, 0, 0);
+                inflate(&mut dec_ox, compressed_data, &mut uncompressed_data, 0, 0);
             if status != TINFLStatus::Done && status != TINFLStatus::HasMoreOutput {
                 return Err(format!(
                     "Failed to decompress cluster (host offset 0x{:x}+{}): {:?}",
