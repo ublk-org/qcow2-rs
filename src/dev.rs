@@ -2041,10 +2041,9 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
     async fn populate_mapping_for_write(
         &self,
         split: &SplitGuestOffset,
-        off_in_cls: usize,
         mapping: Mapping,
     ) -> Qcow2Result<Mapping> {
-        match mapping.plain_offset(off_in_cls) {
+        match mapping.plain_offset(0) {
             Some(_) => Ok(mapping),
             _ => {
                 let _l2_off = self.ensure_l2_offset(&split).await?;
@@ -2053,7 +2052,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
                 let mut l2_table = l2_handle.value().write().await;
 
                 let mapping = l2_table.get_mapping(&self.info, &split);
-                if mapping.plain_offset(off_in_cls).is_some() {
+                if mapping.plain_offset(0).is_some() {
                     Ok(mapping)
                 } else {
                     let mapping = self.alloc_and_map_cluster(&split, &mut l2_table).await?;
@@ -2088,8 +2087,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
 
         // we deal with compressed cow in different code path
         let mapping = if mapping.source != MappingSource::Compressed {
-            self.populate_mapping_for_write(&split, off_in_cls, mapping)
-                .await?
+            self.populate_mapping_for_write(&split, mapping).await?
         } else {
             mapping
         };
