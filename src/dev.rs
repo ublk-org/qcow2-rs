@@ -1806,9 +1806,11 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         may_cow: bool,
         mapping: &Mapping,
         compressed_mapping: Option<&Mapping>,
-        off_in_cls: usize,
         buf: &[u8],
     ) -> Qcow2Result<()> {
+        let info = &self.info;
+        let off_in_cls = (virt_off & (info.in_cluster_offset_mask as u64)) as usize;
+
         let host_off = match mapping.cluster_offset {
             Some(off) => off,
             None => return Err("DataFile mapping: None offset None".into()),
@@ -1823,7 +1825,6 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
             &mapping,
         );
 
-        let info = &self.info;
         let f_write = self.call_write(host_off + off_in_cls as u64, buf);
         let key = host_off >> info.cluster_bits();
 
@@ -1902,17 +1903,16 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
 
     async fn do_write_compressed(
         &self,
-        split: &SplitGuestOffset,
+        off: u64,
         mapping: &Mapping,
-        off_in_cls: usize,
         buf: &[u8],
     ) -> Qcow2Result<()> {
-        let off = split.0;
         let info = &self.info;
+        let split = SplitGuestOffset(off);
 
         log::trace!(
             "do_write_compressed off_in_cls {:x} len {} mapping {}",
-            off_in_cls,
+            off,
             buf.len(),
             &mapping,
         );
@@ -1938,7 +1938,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         match data_mapping {
             Some(m) => {
                 match self
-                    .do_write_data_file(off, true, &m, Some(mapping), off_in_cls, buf)
+                    .do_write_data_file(off, true, &m, Some(mapping), buf)
                     .await
                 {
                     Err(e) => {
@@ -2040,12 +2040,13 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
     #[inline]
     async fn populate_mapping_for_write(
         &self,
-        split: &SplitGuestOffset,
+        virt_off: u64,
         mapping: Mapping,
     ) -> Qcow2Result<Mapping> {
         match mapping.plain_offset(0) {
             Some(_) => Ok(mapping),
             _ => {
+                let split = SplitGuestOffset(virt_off);
                 let _l2_off = self.ensure_l2_offset(&split).await?;
                 let l1_entry = self.get_l1_entry(&split).await?;
                 let l2_handle = self.get_l2_table(&l1_entry, &split).await?;
@@ -2067,8 +2068,6 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
 
     async fn do_write(&self, off: u64, buf: &[u8]) -> Qcow2Result<()> {
         let info = &self.info;
-        let split = SplitGuestOffset(off);
-        let off_in_cls = split.in_cluster_offset(info);
         let mapping = self.get_mapping(off).await?;
         let may_back_cow = info.has_back_file()
             && (buf.len() != info.cluster_size())
@@ -2087,20 +2086,17 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
 
         // we deal with compressed cow in different code path
         let mapping = if mapping.source != MappingSource::Compressed {
-            self.populate_mapping_for_write(&split, mapping).await?
+            self.populate_mapping_for_write(off, mapping).await?
         } else {
             mapping
         };
 
         match mapping.source {
             MappingSource::DataFile => {
-                self.do_write_data_file(off, may_back_cow, &mapping, None, off_in_cls, buf)
+                self.do_write_data_file(off, may_back_cow, &mapping, None, buf)
                     .await
             }
-            MappingSource::Compressed => {
-                self.do_write_compressed(&split, &mapping, off_in_cls, buf)
-                    .await
-            }
+            MappingSource::Compressed => self.do_write_compressed(off, &mapping, buf).await,
             MappingSource::Unallocated | MappingSource::Zero | MappingSource::Backing => {
                 Err("unexpected mapping for do_write".into())
             }
