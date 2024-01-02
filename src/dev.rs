@@ -2038,6 +2038,26 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
     }
 
     #[inline]
+    async fn make_single_write_mapping(&self, virt_off: u64) -> Qcow2Result<Mapping> {
+        let split = SplitGuestOffset(virt_off);
+        let _l2_off = self.ensure_l2_offset(&split).await?;
+        let l1_entry = self.get_l1_entry(&split).await?;
+        let l2_handle = self.get_l2_table(&l1_entry, &split).await?;
+        let mut l2_table = l2_handle.value().write().await;
+
+        let mapping = l2_table.get_mapping(&self.info, &split);
+        if mapping.plain_offset(0).is_some() {
+            Ok(mapping)
+        } else {
+            let mapping = self.alloc_and_map_cluster(&split, &mut l2_table).await?;
+            l2_handle.set_dirty(true);
+            self.mark_need_flush(true);
+
+            Ok(mapping)
+        }
+    }
+
+    #[inline]
     async fn populate_mapping_for_write(
         &self,
         virt_off: u64,
@@ -2045,24 +2065,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
     ) -> Qcow2Result<Mapping> {
         match mapping.plain_offset(0) {
             Some(_) => Ok(mapping),
-            _ => {
-                let split = SplitGuestOffset(virt_off);
-                let _l2_off = self.ensure_l2_offset(&split).await?;
-                let l1_entry = self.get_l1_entry(&split).await?;
-                let l2_handle = self.get_l2_table(&l1_entry, &split).await?;
-                let mut l2_table = l2_handle.value().write().await;
-
-                let mapping = l2_table.get_mapping(&self.info, &split);
-                if mapping.plain_offset(0).is_some() {
-                    Ok(mapping)
-                } else {
-                    let mapping = self.alloc_and_map_cluster(&split, &mut l2_table).await?;
-                    l2_handle.set_dirty(true);
-                    self.mark_need_flush(true);
-
-                    Ok(mapping)
-                }
-            }
+            _ => self.make_single_write_mapping(virt_off).await,
         }
     }
 
