@@ -2058,22 +2058,134 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
     }
 
     #[inline]
+    async fn __make_multiple_write_mapping(&self, start: u64, end: u64) -> Qcow2Result<usize> {
+        // don't pre-allocate mapping for compressed and backing file
+        fn need_make_mapping(mapping: &Mapping, info: &Qcow2Info) -> bool {
+            mapping.plain_offset(0).is_none()
+                && mapping.source != MappingSource::Compressed
+                && !info.has_back_file()
+        }
+
+        let info = &self.info;
+        let cls_size = info.cluster_size() as u64;
+
+        debug_assert!((start & (cls_size - 1)) == 0);
+
+        let split = SplitGuestOffset(start);
+        let _l2_off = self.ensure_l2_offset(&split).await?;
+        let l1_entry = self.get_l1_entry(&split).await?;
+        let l2_handle = self.get_l2_table(&l1_entry, &split).await?;
+        let mut l2_table = l2_handle.value().write().await;
+
+        let end = {
+            let l2_slice_idx = split.l2_slice_index(info) as u32;
+            std::cmp::min(
+                end,
+                start + (((info.l2_slice_entries - l2_slice_idx) as u64) << info.cluster_bits()),
+            )
+        };
+
+        let mut nr_clusters = 0;
+        // figure out how many clusters to allocate
+        for this_off in (start..end).step_by(cls_size as usize) {
+            let s = SplitGuestOffset(this_off);
+            let mapping = l2_table.get_mapping(&self.info, &s);
+
+            if need_make_mapping(&mapping, info) {
+                nr_clusters += 1
+            }
+        }
+
+        if nr_clusters == 0 {
+            return Ok(0);
+        }
+
+        let (cluster_start, cluster_cnt) = match self.allocate_clusters(nr_clusters).await? {
+            Some((s, c)) => (s, c),
+            _ => self
+                .allocate_cluster()
+                .await
+                .unwrap()
+                .expect("running out of cluster"),
+        };
+
+        let done = if cluster_cnt > 0 {
+            let mut idx = 0;
+            for this_off in (start..end).step_by(cls_size as usize) {
+                let split = SplitGuestOffset(this_off);
+                let mapping = l2_table.get_mapping(&self.info, &split);
+
+                if need_make_mapping(&mapping, info) {
+                    let l2_off = cluster_start + ((idx as u64) << info.cluster_bits());
+
+                    // this is one new cluster
+                    self.mark_new_cluster(l2_off >> info.cluster_bits()).await;
+                    let _ = l2_table.map_cluster(split.l2_slice_index(info), l2_off);
+
+                    idx += 1;
+                    if idx >= cluster_cnt {
+                        break;
+                    }
+                }
+            }
+            idx
+        } else {
+            0
+        };
+
+        if done > 0 {
+            l2_handle.set_dirty(true);
+            self.mark_need_flush(true);
+        }
+
+        Ok(done)
+    }
+
+    async fn make_multiple_write_mappings(&self, mut start: u64, end: u64) -> Qcow2Result<()> {
+        while start < end {
+            let done = self.__make_multiple_write_mapping(start, end).await?;
+
+            if done == 0 {
+                break;
+            }
+            start += (done as u64) << self.info.cluster_bits();
+        }
+        Ok(())
+    }
+
+    #[inline]
     async fn populate_mapping_for_write(
         &self,
         virt_off: u64,
+        len: usize,
+        cow: bool,
         mapping: Mapping,
     ) -> Qcow2Result<Mapping> {
         match mapping.plain_offset(0) {
             Some(_) => Ok(mapping),
-            _ => self.make_single_write_mapping(virt_off).await,
+            _ => {
+                let info = &self.info;
+                let single = (virt_off >> info.cluster_bits())
+                    == ((virt_off + (len as u64) - 1) >> info.cluster_bits());
+                if cow || single {
+                    self.make_single_write_mapping(virt_off).await
+                } else {
+                    let cls_size = info.cluster_size() as u64;
+                    let start = virt_off & !(cls_size - 1);
+                    let end = (virt_off + (len as u64) + cls_size - 1) & !(cls_size - 1);
+
+                    let _ = self.make_multiple_write_mappings(start, end).await?;
+
+                    self.get_mapping(virt_off).await
+                }
+            }
         }
     }
 
-    async fn do_write(&self, off: u64, buf: &[u8]) -> Qcow2Result<()> {
+    async fn do_write(&self, off: u64, buf: &[u8], max_len: usize) -> Qcow2Result<()> {
         let info = &self.info;
         let mapping = self.get_mapping(off).await?;
         let may_back_cow = info.has_back_file()
-            && (buf.len() != info.cluster_size())
             && match mapping.source {
                 MappingSource::Unallocated | MappingSource::Backing => true,
                 _ => false,
@@ -2089,15 +2201,22 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
 
         // we deal with compressed cow in different code path
         let mapping = if mapping.source != MappingSource::Compressed {
-            self.populate_mapping_for_write(off, mapping).await?
+            self.populate_mapping_for_write(off, max_len, may_back_cow, mapping)
+                .await?
         } else {
             mapping
         };
 
         match mapping.source {
             MappingSource::DataFile => {
-                self.do_write_data_file(off, may_back_cow, &mapping, None, buf)
-                    .await
+                self.do_write_data_file(
+                    off,
+                    may_back_cow && (buf.len() != info.cluster_size()),
+                    &mapping,
+                    None,
+                    buf,
+                )
+                .await
             }
             MappingSource::Compressed => self.do_write_compressed(off, &mapping, buf).await,
             MappingSource::Unallocated | MappingSource::Zero | MappingSource::Backing => {
@@ -2144,7 +2263,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
             remain = b;
 
             //writes.push(self.do_write(offset, iobuf));
-            self.do_write(offset, iobuf).await?;
+            self.do_write(offset, iobuf, len).await?;
 
             offset += curr_len as u64;
             len -= curr_len;
