@@ -2393,10 +2393,12 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
                     _ => {}
                 },
                 MappingSource::Compressed => match mapping.cluster_offset {
-                    Some(start) => {
-                        let end = start + (mapping.compressed_length.unwrap() as u64);
-                        for off in (start..=end).step_by(info.cluster_size()) {
-                            Self::add_used_cluster_to_set(ranges, off >> info.cluster_bits());
+                    Some(off) => {
+                        let start = off >> info.cluster_bits();
+                        let end = (off + (mapping.compressed_length.unwrap() as u64))
+                            >> info.cluster_bits();
+                        for off in start..=end {
+                            Self::add_used_cluster_to_set(ranges, off);
                         }
                         allocated += 1;
                         compressed += 1;
