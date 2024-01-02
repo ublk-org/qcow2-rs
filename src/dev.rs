@@ -589,7 +589,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         let l2_cache = &self.l2cache;
 
         // fast path
-        if let Some(entry) = l2_cache.get(key).await {
+        if let Some(entry) = l2_cache.get(key) {
             return Ok(entry);
         }
 
@@ -607,7 +607,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         )
         .await?;
 
-        if let Some(entry) = l2_cache.get(key).await {
+        if let Some(entry) = l2_cache.get(key) {
             Ok(entry)
         } else {
             Err("Fail to load l2 table".into())
@@ -741,7 +741,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         start: usize,
         end: usize,
     ) -> Qcow2Result<()> {
-        let entries = cache.get_dirty_entries(start, end).await;
+        let entries = cache.get_dirty_entries(start, end);
 
         log::debug!(
             "flush_cache: type {} {:x} - {:x}",
@@ -1028,11 +1028,9 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
             crate::helpers::qcow2_type_of(&slice),
             slice_off
         );
-        cache
-            .put_into_wmap_with(key, || AsyncRwLock::new(slice))
-            .await;
+        cache.put_into_wmap_with(key, || AsyncRwLock::new(slice));
 
-        if let Some(entry) = cache.get_from_wmap(key).await {
+        if let Some(entry) = cache.get_from_wmap(key) {
             // hold write lock, so anyone can't get this entry
             // and the whole cache lock isn't required, so lock wait is just on
             // this entry
@@ -1056,7 +1054,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
                 }
 
                 //commit all populated caches and make them visible
-                Ok(cache.commit_wmap().await)
+                Ok(cache.commit_wmap())
             } else {
                 log::trace!("add_cache_slice: slice is already update");
                 Ok(None)
@@ -1097,7 +1095,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         let rb_cache = &self.refblock_cache;
 
         // fast path
-        if let Some(entry) = rb_cache.get(key).await {
+        if let Some(entry) = rb_cache.get(key) {
             return Ok(entry);
         }
 
@@ -1109,7 +1107,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         )
         .await?;
 
-        if let Some(entry) = rb_cache.get(key).await {
+        if let Some(entry) = rb_cache.get(key) {
             Ok(entry)
         } else {
             Err("Fail to load refcount block".into())

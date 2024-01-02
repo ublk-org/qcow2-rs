@@ -1,6 +1,3 @@
-use futures_locks::{
-    Mutex as AsyncMutex, RwLock as AsyncRwLock, RwLockWriteGuard as LockWriteGuard,
-};
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -19,8 +16,8 @@ pub type AsyncLruCacheEntry<V> = Arc<AsyncLruCacheEntryInner<V>>;
 /// Use lru_timer(counter) to simulate use timestamp, this way should
 /// be good for single context.
 pub struct AsyncLruCache<K: Clone + PartialEq + Eq + Hash + std::fmt::Debug, V> {
-    rmap: AsyncRwLock<HashMap<K, AsyncLruCacheEntry<V>>>,
-    wmap: AsyncMutex<HashMap<K, AsyncLruCacheEntry<V>>>,
+    rmap: std::sync::RwLock<HashMap<K, AsyncLruCacheEntry<V>>>,
+    wmap: std::sync::Mutex<HashMap<K, AsyncLruCacheEntry<V>>>,
     limit: usize,
     lru_timer: AtomicUsize,
 }
@@ -38,15 +35,15 @@ impl<K: Clone + PartialEq + Eq + Hash + std::fmt::Debug + std::cmp::PartialOrd, 
     }
 
     /// todo: replace val with closure to build value
-    pub async fn put_into_wmap_with<F: FnOnce() -> V>(&self, key: K, f: F) {
-        let mut w = self.wmap.lock().await;
+    pub fn put_into_wmap_with<F: FnOnce() -> V>(&self, key: K, f: F) {
+        let mut w = self.wmap.lock().unwrap();
 
         let entry = Arc::new(AsyncLruCacheEntryInner::new(f()));
         w.entry(key).or_insert(entry);
     }
 
-    pub async fn get_from_wmap(&self, key: K) -> Option<AsyncLruCacheEntry<V>> {
-        let w = self.wmap.lock().await;
+    pub fn get_from_wmap(&self, key: K) -> Option<AsyncLruCacheEntry<V>> {
+        let w = self.wmap.lock().unwrap();
 
         if let Some(entry) = w.get(&key) {
             Some(Arc::clone(entry))
@@ -56,9 +53,9 @@ impl<K: Clone + PartialEq + Eq + Hash + std::fmt::Debug + std::cmp::PartialOrd, 
     }
 
     /// Flush key/value pairs from wmap to rmap
-    pub async fn commit_wmap(&self) -> Option<Vec<(K, AsyncLruCacheEntry<V>)>> {
-        let mut w = self.wmap.lock().await;
-        let mut r = self.rmap.write().await;
+    pub fn commit_wmap(&self) -> Option<Vec<(K, AsyncLruCacheEntry<V>)>> {
+        let mut w = self.wmap.lock().unwrap();
+        let mut r = self.rmap.write().unwrap();
         let mut vec = Vec::new();
 
         let wlen = w.len();
@@ -107,8 +104,8 @@ impl<K: Clone + PartialEq + Eq + Hash + std::fmt::Debug + std::cmp::PartialOrd, 
     }
 
     #[inline(always)]
-    pub async fn get(&self, key: K) -> Option<AsyncLruCacheEntry<V>> {
-        let map = self.rmap.read().await;
+    pub fn get(&self, key: K) -> Option<AsyncLruCacheEntry<V>> {
+        let map = self.rmap.read().unwrap();
         if let Some(entry) = map.get(&key) {
             self.update_lru(&entry);
             Some(Arc::clone(entry))
@@ -117,8 +114,8 @@ impl<K: Clone + PartialEq + Eq + Hash + std::fmt::Debug + std::cmp::PartialOrd, 
         }
     }
 
-    pub async fn get_dirty_entries(&self, start: K, end: K) -> Vec<(K, AsyncLruCacheEntry<V>)> {
-        let map = self.rmap.read().await;
+    pub fn get_dirty_entries(&self, start: K, end: K) -> Vec<(K, AsyncLruCacheEntry<V>)> {
+        let map = self.rmap.read().unwrap();
         let mut vec = Vec::new();
 
         for (key, value) in map.iter() {
@@ -132,7 +129,7 @@ impl<K: Clone + PartialEq + Eq + Hash + std::fmt::Debug + std::cmp::PartialOrd, 
 
     fn __pop_lru(
         &self,
-        map: &mut LockWriteGuard<HashMap<K, AsyncLruCacheEntry<V>>>,
+        map: &mut std::sync::RwLockWriteGuard<HashMap<K, AsyncLruCacheEntry<V>>>,
     ) -> Option<(K, AsyncLruCacheEntry<V>)> {
         let (_, mut key_out) =
             map.iter()
