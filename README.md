@@ -22,9 +22,10 @@ This project is based on qcow2 implementation from `rsd`[^1]
 Motivation of this project is for supporting ublk-qcow2[^4], but turns out it
 becomes one generic async qcow2 library.
 
-Also one binary utility is shipped in this project, which can dump qcow2 meta,
+Also one utility is included in this project, which can dump qcow2 meta,
 show any meta related statistics of the image, check image meta integrity &
-host cluster leak, format qcow2 image, ...
+host cluster leak, format qcow2 image, ..., and could provide more information
+compared with `qemu-img`.
 
 ## Example
 
@@ -50,6 +51,13 @@ host cluster leak, format qcow2 image, ...
     });
 
 ```
+
+## Test
+
+- for running the built-in test, `qemu-img` is required, so package of
+`qemu-utils`(Debian/Ubuntu) or `qemu-img`(Fedora, RHEL, ...) needs to
+be installed
+
 
 ## License
 
