@@ -1834,7 +1834,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         };
 
         log::trace!(
-            "do_write_data_file off_in_cls {:x} len {} virt_off {} cow {} mapping {}",
+            "do_write_data_file off_in_cls {:x} len {} virt_off {:x} cow {} mapping {}",
             off_in_cls,
             buf.len(),
             virt_off,
@@ -2053,46 +2053,51 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
     }
 
     #[inline]
-    async fn make_single_write_mapping(&self, virt_off: u64) -> Qcow2Result<Mapping> {
+    async fn make_single_write_mapping(&self, virt_off: u64) -> Qcow2Result<L2Entry> {
         let split = SplitGuestOffset(virt_off);
         let _ = self.ensure_l2_offset(&split).await?;
         let l2_handle = self.get_l2_slice(&split).await?;
         let mut l2_table = l2_handle.value().write().await;
 
         let mapping = l2_table.get_mapping(&self.info, &split);
-        if mapping.plain_offset(0).is_some() {
-            Ok(mapping)
-        } else {
-            let mapping = self.alloc_and_map_cluster(&split, &mut l2_table).await?;
+        if mapping.plain_offset(0).is_none() {
+            let _ = self.alloc_and_map_cluster(&split, &mut l2_table).await?;
             l2_handle.set_dirty(true);
             self.mark_need_flush(true);
-
-            Ok(mapping)
         }
+        Ok(l2_table.get_entry(&self.info, &split))
     }
 
-    #[inline]
-    async fn __make_multiple_write_mapping(&self, start: u64, end: u64) -> Qcow2Result<usize> {
-        // don't pre-allocate mapping for compressed and backing file
-        fn need_make_mapping(mapping: &Mapping, info: &Qcow2Info) -> bool {
-            if mapping.plain_offset(0).is_some() {
-                return false;
-            }
-
-            if mapping.source == MappingSource::Compressed {
-                return false;
-            }
-
-            if info.has_back_file()
-                && (mapping.source == MappingSource::Backing
-                    || mapping.source == MappingSource::Unallocated)
-            {
-                return false;
-            }
-
-            return true;
+    /// don't pre-populate mapping for backing & compressed cow, which
+    /// have to update mapping until copy on write is completed, otherwise
+    /// data loss may be caused.
+    fn need_make_mapping(mapping: &Mapping, info: &Qcow2Info) -> bool {
+        if mapping.plain_offset(0).is_some() {
+            return false;
         }
 
+        if mapping.source == MappingSource::Compressed {
+            return false;
+        }
+
+        if info.has_back_file()
+            && (mapping.source == MappingSource::Backing
+                || mapping.source == MappingSource::Unallocated)
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    /// return how many l2 entries stored in `l2_entries`
+    #[inline]
+    async fn __make_multiple_write_mapping(
+        &self,
+        start: u64,
+        end: u64,
+        l2_entries: &mut Vec<L2Entry>,
+    ) -> Qcow2Result<usize> {
         let info = &self.info;
         let cls_size = info.cluster_size() as u64;
 
@@ -2103,6 +2108,8 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         let l2_handle = self.get_l2_slice(&split).await?;
         let mut l2_table = l2_handle.value().write().await;
 
+        // each time, just handle one l2 slice, so the write lock
+        // is just required once
         let end = {
             let l2_slice_idx = split.l2_slice_index(info) as u32;
             std::cmp::min(
@@ -2111,19 +2118,24 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
             )
         };
 
+        // figure out how many clusters to allocate for write
         let mut nr_clusters = 0;
-        // figure out how many clusters to allocate
         for this_off in (start..end).step_by(cls_size as usize) {
             let s = SplitGuestOffset(this_off);
             let mapping = l2_table.get_mapping(&self.info, &s);
 
-            if need_make_mapping(&mapping, info) {
+            if Self::need_make_mapping(&mapping, info) {
                 nr_clusters += 1
             }
         }
 
         if nr_clusters == 0 {
-            return Ok(0);
+            for this_off in (start..end).step_by(cls_size as usize) {
+                let s = SplitGuestOffset(this_off);
+                let entry = l2_table.get_entry(info, &s);
+                l2_entries.push(entry);
+            }
+            return Ok(((end - start) as usize) >> info.cluster_bits());
         }
 
         let (cluster_start, cluster_cnt) = match self.allocate_clusters(nr_clusters).await? {
@@ -2135,23 +2147,34 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
                 .expect("running out of cluster"),
         };
 
+        let mut this_off = start;
         let done = if cluster_cnt > 0 {
+            // how many mappings are updated
             let mut idx = 0;
-            for this_off in (start..end).step_by(cls_size as usize) {
-                let split = SplitGuestOffset(this_off);
-                let mapping = l2_table.get_mapping(&self.info, &split);
 
-                if need_make_mapping(&mapping, info) {
+            while this_off < end {
+                let split = SplitGuestOffset(this_off);
+                let entry = l2_table.get_entry(info, &split);
+                let mapping = entry.into_mapping(info, &split);
+
+                if Self::need_make_mapping(&mapping, info) {
                     let l2_off = cluster_start + ((idx as u64) << info.cluster_bits());
 
                     // this is one new cluster
                     self.mark_new_cluster(l2_off >> info.cluster_bits()).await;
                     let _ = l2_table.map_cluster(split.l2_slice_index(info), l2_off);
 
+                    //load new entry
+                    let entry = l2_table.get_entry(info, &split);
+                    l2_entries.push(entry);
                     idx += 1;
-                    if idx >= cluster_cnt {
-                        break;
-                    }
+                } else {
+                    l2_entries.push(entry)
+                }
+
+                this_off += cls_size;
+                if idx >= cluster_cnt {
+                    break;
                 }
             }
             idx
@@ -2164,52 +2187,76 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
             self.mark_need_flush(true);
         }
 
-        Ok(done)
+        Ok(((this_off - start) as usize) >> info.cluster_bits())
     }
 
-    async fn make_multiple_write_mappings(&self, mut start: u64, end: u64) -> Qcow2Result<()> {
+    async fn make_multiple_write_mappings(
+        &self,
+        mut start: u64,
+        end: u64,
+    ) -> Qcow2Result<Vec<L2Entry>> {
+        let info = &self.info;
+        let mut l2_entries = Vec::new();
         while start < end {
-            let done = self.__make_multiple_write_mapping(start, end).await?;
+            // optimize in future by getting l2 entries at batch
+            let entry = self.get_l2_entry(start).await?;
 
-            if done == 0 {
-                break;
-            }
-            start += (done as u64) << self.info.cluster_bits();
+            let split = SplitGuestOffset(start);
+            let mapping = entry.into_mapping(info, &split);
+
+            let done = if Self::need_make_mapping(&mapping, info) {
+                self.__make_multiple_write_mapping(start, end, &mut l2_entries)
+                    .await?
+            } else {
+                l2_entries.push(entry);
+                1
+            };
+
+            start += (done as u64) << info.cluster_bits();
         }
-        Ok(())
+        Ok(l2_entries)
     }
 
+    /// populate mapping for write at batch, and this way may improve
+    /// perf a lot for big sequential IO, cause all meta setup can be
+    /// one in single place, then data write IO can be run concurrently
+    /// without lock contention
     #[inline]
     async fn populate_mapping_for_write(
         &self,
         virt_off: u64,
         len: usize,
-        mapping: Mapping,
-    ) -> Qcow2Result<Mapping> {
-        match mapping.plain_offset(0) {
-            Some(_) => Ok(mapping),
-            _ => {
-                let info = &self.info;
-                let single = (virt_off >> info.cluster_bits())
-                    == ((virt_off + (len as u64) - 1) >> info.cluster_bits());
-                if single {
-                    self.make_single_write_mapping(virt_off).await
-                } else {
-                    let cls_size = info.cluster_size() as u64;
-                    let start = virt_off & !(cls_size - 1);
-                    let end = (virt_off + (len as u64) + cls_size - 1) & !(cls_size - 1);
+    ) -> Qcow2Result<Vec<L2Entry>> {
+        let info = &self.info;
+        let single = (virt_off >> info.cluster_bits())
+            == ((virt_off + (len as u64) - 1) >> info.cluster_bits());
+        if single {
+            let entry = self.get_l2_entry(virt_off).await?;
+            let split = SplitGuestOffset(virt_off);
+            let mapping = entry.into_mapping(info, &split);
 
-                    let _ = self.make_multiple_write_mappings(start, end).await?;
+            let entry = if Self::need_make_mapping(&mapping, info) {
+                self.make_single_write_mapping(virt_off).await?
+            } else {
+                entry
+            };
 
-                    self.get_mapping(virt_off).await
-                }
-            }
+            Ok(vec![entry])
+        } else {
+            let cls_size = info.cluster_size() as u64;
+            let start = virt_off & !(cls_size - 1);
+            let end = (virt_off + (len as u64) + cls_size - 1) & !(cls_size - 1);
+
+            let entries = self.make_multiple_write_mappings(start, end).await?;
+
+            Ok(entries)
         }
     }
 
-    async fn do_write(&self, off: u64, buf: &[u8], max_len: usize) -> Qcow2Result<()> {
+    async fn do_write(&self, l2_e: L2Entry, off: u64, buf: &[u8]) -> Qcow2Result<()> {
         let info = &self.info;
-        let mapping = self.get_mapping(off).await?;
+        let split = SplitGuestOffset(off & !(info.in_cluster_offset_mask as u64));
+        let mapping = l2_e.into_mapping(info, &split);
 
         log::trace!(
             "do_write: offset {:x} len {} mapping {}",
@@ -2220,19 +2267,19 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
 
         match mapping.source {
             MappingSource::DataFile => self.do_write_data_file(off, &mapping, None, buf).await,
+            MappingSource::Compressed => self.do_write_cow(off, &mapping, buf).await,
             MappingSource::Backing | MappingSource::Unallocated if info.has_back_file() => {
                 self.do_write_cow(off, &mapping, buf).await
             }
-            MappingSource::Compressed => self.do_write_cow(off, &mapping, buf).await,
             _ => {
-                let mapping = self
-                    .populate_mapping_for_write(off, max_len, mapping)
-                    .await?;
-                if mapping.source == MappingSource::DataFile {
-                    self.do_write_data_file(off, &mapping, None, buf).await
-                } else {
-                    Err("invalid mapping built".into())
-                }
+                eprintln!(
+                    "invalid mapping {:?}, has_back_file {} offset {:x} len {}",
+                    mapping.source,
+                    info.has_back_file(),
+                    off,
+                    buf.len()
+                );
+                Err("invalid mapping built".into())
             }
         }
     }
@@ -2268,6 +2315,8 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         }
 
         let mut remain = buf;
+        let mut idx = 0;
+        let l2_entries = self.populate_mapping_for_write(offset, len).await?;
         while len > 0 {
             let in_cluster_offset = offset as usize & info.in_cluster_offset_mask;
             let curr_len = std::cmp::min(info.cluster_size() - in_cluster_offset, len);
@@ -2275,10 +2324,11 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
             remain = b;
 
             //writes.push(self.do_write(offset, iobuf));
-            self.do_write(offset, iobuf, len).await?;
+            self.do_write(l2_entries[idx], offset, iobuf).await?;
 
             offset += curr_len as u64;
             len -= curr_len;
+            idx += 1;
         }
 
         log::trace!("write_at offset {:x} len {} <<<", old_offset, buf.len());
