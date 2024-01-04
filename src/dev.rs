@@ -2286,6 +2286,8 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
 
     #[inline]
     async fn __write_at(&self, buf: &[u8], mut offset: u64) -> Qcow2Result<()> {
+        use futures::stream::{FuturesUnordered, StreamExt};
+
         let info = &self.info;
         let bs = 1 << info.block_size_shift;
         let bs_mask = bs - 1;
@@ -2314,6 +2316,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
             return Err("write_at: write to read-only image".into());
         }
 
+        let writes = FuturesUnordered::new();
         let mut remain = buf;
         let mut idx = 0;
         let l2_entries = self.populate_mapping_for_write(offset, len).await?;
@@ -2323,12 +2326,17 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
             let (iobuf, b) = remain.split_at(curr_len);
             remain = b;
 
-            //writes.push(self.do_write(offset, iobuf));
-            self.do_write(l2_entries[idx], offset, iobuf).await?;
+            writes.push(self.do_write(l2_entries[idx], offset, iobuf));
 
             offset += curr_len as u64;
             len -= curr_len;
             idx += 1;
+        }
+        let res: Vec<_> = writes.collect().await;
+        for r in res {
+            if r.is_err() {
+                return Err("write_at: one write failed".into());
+            }
         }
 
         log::trace!("write_at offset {:x} len {} <<<", old_offset, buf.len());
