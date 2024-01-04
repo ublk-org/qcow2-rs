@@ -1028,39 +1028,37 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
             crate::helpers::qcow2_type_of(&slice),
             slice_off
         );
-        cache.put_into_wmap_with(key, || AsyncRwLock::new(slice));
 
-        if let Some(entry) = cache.get_from_wmap(key) {
-            // hold write lock, so anyone can't get this entry
-            // and the whole cache lock isn't required, so lock wait is just on
-            // this entry
-            let mut slice = entry.value().write().await;
+        // may return entry added in other code paths, but it is guaranteed that
+        // we can get one entry here
+        let entry = cache.put_into_wmap_with(key, || AsyncRwLock::new(slice));
 
-            // if rb becomes update, it has been committed in read map already
-            if !slice.is_update() {
-                let off = top_e.get_value() + slice_off as u64;
-                slice.set_offset(Some(off));
+        // hold write lock, so anyone can't get this entry
+        // and the whole cache lock isn't required, so lock wait is just on
+        // this entry
+        let mut slice = entry.value().write().await;
 
-                if !self.cluster_is_new(off >> info.cluster_bits()).await {
-                    let buf = unsafe {
-                        std::slice::from_raw_parts_mut(slice.as_mut_ptr(), slice.byte_size())
-                    };
-                    self.call_read(off, buf).await?;
-                    log::trace!("add_cache_slice: load from disk");
-                } else {
-                    entry.set_dirty(true);
-                    self.mark_need_flush(true);
-                    log::trace!("add_cache_slice: build from inflight");
-                }
+        // if rb becomes update, it has been committed in read map already
+        if !slice.is_update() {
+            let off = top_e.get_value() + slice_off as u64;
+            slice.set_offset(Some(off));
 
-                //commit all populated caches and make them visible
-                Ok(cache.commit_wmap())
+            if !self.cluster_is_new(off >> info.cluster_bits()).await {
+                let buf = unsafe {
+                    std::slice::from_raw_parts_mut(slice.as_mut_ptr(), slice.byte_size())
+                };
+                self.call_read(off, buf).await?;
+                log::trace!("add_cache_slice: load from disk");
             } else {
-                log::trace!("add_cache_slice: slice is already update");
-                Ok(None)
+                entry.set_dirty(true);
+                self.mark_need_flush(true);
+                log::trace!("add_cache_slice: build from inflight");
             }
+
+            //commit all populated caches and make them visible
+            Ok(cache.commit_wmap())
         } else {
-            log::trace!("add_cache_slice: entry not found in staggering map");
+            log::trace!("add_cache_slice: slice is already update");
             Ok(None)
         }
     }

@@ -34,22 +34,19 @@ impl<K: Clone + PartialEq + Eq + Hash + std::fmt::Debug + std::cmp::PartialOrd, 
         }
     }
 
-    /// todo: replace val with closure to build value
-    pub fn put_into_wmap_with<F: FnOnce() -> V>(&self, key: K, f: F) {
+    pub fn put_into_wmap_with<F: FnOnce() -> V>(&self, key: K, f: F) -> AsyncLruCacheEntry<V> {
         let mut w = self.wmap.lock().unwrap();
+        let r = self.rmap.read().unwrap();
 
-        let entry = Arc::new(AsyncLruCacheEntryInner::new(f()));
-        w.entry(key).or_insert(entry);
-    }
-
-    pub fn get_from_wmap(&self, key: K) -> Option<AsyncLruCacheEntry<V>> {
-        let w = self.wmap.lock().unwrap();
-
-        if let Some(entry) = w.get(&key) {
-            Some(Arc::clone(entry))
+        let entry = if !r.contains_key(&key) {
+            let entry = Arc::new(AsyncLruCacheEntryInner::new(f()));
+            w.entry(key.clone()).or_insert(entry);
+            w.get(&key).unwrap()
         } else {
-            None
-        }
+            r.get(&key).unwrap()
+        };
+
+        Arc::clone(entry)
     }
 
     /// Flush key/value pairs from wmap to rmap
