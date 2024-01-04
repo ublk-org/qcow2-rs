@@ -1683,11 +1683,11 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
     }
 
     /// for fill up l1 entry
-    async fn ensure_l2_offset(&self, split: &SplitGuestOffset) -> Qcow2Result<u64> {
+    async fn ensure_l2_offset(&self, split: &SplitGuestOffset) -> Qcow2Result<L1Entry> {
         let info = &self.info;
         let l1_entry = self.get_l1_entry(&split).await?;
         if !l1_entry.is_zero() {
-            return Ok(l1_entry.l2_offset());
+            return Ok(l1_entry);
         }
 
         let l1_index = split.l1_index(info);
@@ -1736,7 +1736,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         // Retry before allocating, maybe something has changed in the meantime
         let l1_e = l1_table.get(l1_index);
         if !l1_e.is_zero() {
-            return Ok(l1_e.l2_offset());
+            return Ok(l1_e);
         }
 
         let allocated = self.allocate_cluster().await?;
@@ -1750,7 +1750,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
                 l1_table.map_l2_offset(l1_index, l2_offset);
                 self.mark_need_flush(true);
 
-                Ok(l2_offset)
+                Ok(l1_table.get(l1_index))
             }
             None => Err("nothing allocated for l2 table".into()),
         }
@@ -2038,8 +2038,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
     #[inline]
     async fn make_single_write_mapping(&self, virt_off: u64) -> Qcow2Result<Mapping> {
         let split = SplitGuestOffset(virt_off);
-        let _l2_off = self.ensure_l2_offset(&split).await?;
-        let l1_entry = self.get_l1_entry(&split).await?;
+        let l1_entry = self.ensure_l2_offset(&split).await?;
         let l2_handle = self.get_l2_table(&l1_entry, &split).await?;
         let mut l2_table = l2_handle.value().write().await;
 
@@ -2070,8 +2069,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         debug_assert!((start & (cls_size - 1)) == 0);
 
         let split = SplitGuestOffset(start);
-        let _l2_off = self.ensure_l2_offset(&split).await?;
-        let l1_entry = self.get_l1_entry(&split).await?;
+        let l1_entry = self.ensure_l2_offset(&split).await?;
         let l2_handle = self.get_l2_table(&l1_entry, &split).await?;
         let mut l2_table = l2_handle.value().write().await;
 
