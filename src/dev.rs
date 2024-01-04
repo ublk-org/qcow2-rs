@@ -579,7 +579,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
     }
 
     #[inline]
-    async fn get_l2_table(
+    async fn get_l2_slice(
         &self,
         l1_e: &L1Entry,
         split: &SplitGuestOffset,
@@ -1407,7 +1407,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
             });
         }
 
-        let res = self.get_l2_table(&l1_entry, &split).await?;
+        let res = self.get_l2_slice(&l1_entry, &split).await?;
         let l2_table = res.value().read().await;
 
         Ok(l2_table.get_mapping(&self.info, &split))
@@ -1916,7 +1916,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         );
         let data_mapping = {
             let l1_entry = self.get_l1_entry(&split).await?;
-            let l2_handle = self.get_l2_table(&l1_entry, &split).await?;
+            let l2_handle = self.get_l2_slice(&l1_entry, &split).await?;
             let mut l2_table = l2_handle.value().write().await;
 
             // someone may jump on this cluster at the same time,
@@ -1949,7 +1949,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
                             .await;
 
                         let l1_entry = self.get_l1_entry(&split).await?;
-                        let l2_handle = self.get_l2_table(&l1_entry, &split).await?;
+                        let l2_handle = self.get_l2_slice(&l1_entry, &split).await?;
                         let mut l2_table = l2_handle.value().write().await;
                         l2_table.set(
                             split.l2_slice_index(info),
@@ -1973,7 +1973,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
                         {
                             // flush mapping table in-place update
                             let l1_entry = self.get_l1_entry(&split).await?;
-                            let l2_handle = self.get_l2_table(&l1_entry, &split).await?;
+                            let l2_handle = self.get_l2_slice(&l1_entry, &split).await?;
                             let l2_table = l2_handle.value().read().await;
                             let off = l2_table.get_offset().unwrap();
                             let buf = unsafe {
@@ -2039,7 +2039,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
     async fn make_single_write_mapping(&self, virt_off: u64) -> Qcow2Result<Mapping> {
         let split = SplitGuestOffset(virt_off);
         let l1_entry = self.ensure_l2_offset(&split).await?;
-        let l2_handle = self.get_l2_table(&l1_entry, &split).await?;
+        let l2_handle = self.get_l2_slice(&l1_entry, &split).await?;
         let mut l2_table = l2_handle.value().write().await;
 
         let mapping = l2_table.get_mapping(&self.info, &split);
@@ -2070,7 +2070,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
 
         let split = SplitGuestOffset(start);
         let l1_entry = self.ensure_l2_offset(&split).await?;
-        let l2_handle = self.get_l2_table(&l1_entry, &split).await?;
+        let l2_handle = self.get_l2_slice(&l1_entry, &split).await?;
         let mut l2_table = l2_handle.value().write().await;
 
         let end = {
