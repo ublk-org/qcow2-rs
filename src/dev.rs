@@ -589,7 +589,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         let l2_cache = &self.l2cache;
 
         log::debug!(
-            "get_l2_slice: l1_e {:x} virt_addr {:x}",
+            "get_l2_slice_slow: l1_e {:x} virt_addr {:x}",
             l1_e.get_value(),
             split.guest_addr(),
         );
@@ -1818,13 +1818,13 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
     async fn do_write_data_file(
         &self,
         virt_off: u64,
-        may_cow: bool,
         mapping: &Mapping,
-        compressed_mapping: Option<&Mapping>,
+        cow_mapping: Option<&Mapping>,
         buf: &[u8],
     ) -> Qcow2Result<()> {
         let info = &self.info;
         let off_in_cls = (virt_off & (info.in_cluster_offset_mask as u64)) as usize;
+        let may_cow = cow_mapping.is_some();
 
         let host_off = match mapping.cluster_offset {
             Some(off) => off,
@@ -1892,13 +1892,17 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
                 futures::future::join_all(discards).await;
             }
 
-            let cow_res = if may_cow {
-                match compressed_mapping {
-                    None => self.do_back_cow(virt_off, off_in_cls, buf, host_off).await,
-                    Some(m) => self.do_compressed_cow(off_in_cls, buf, host_off, m).await,
-                }
-            } else {
-                Ok(())
+            let cow_res = match cow_mapping {
+                None => Ok(()),
+                Some(m) => match m.source {
+                    MappingSource::Compressed => {
+                        self.do_compressed_cow(off_in_cls, buf, host_off, m).await
+                    }
+                    MappingSource::Backing => {
+                        self.do_back_cow(virt_off, off_in_cls, buf, host_off).await
+                    }
+                    _ => Ok(()),
+                },
             };
 
             /*
@@ -1916,21 +1920,22 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         f_write.await
     }
 
-    async fn do_write_compressed(
-        &self,
-        off: u64,
-        mapping: &Mapping,
-        buf: &[u8],
-    ) -> Qcow2Result<()> {
+    async fn do_write_cow(&self, off: u64, mapping: &Mapping, buf: &[u8]) -> Qcow2Result<()> {
         let info = &self.info;
         let split = SplitGuestOffset(off);
+        let compressed = mapping.source == MappingSource::Compressed;
 
         log::trace!(
-            "do_write_compressed off_in_cls {:x} len {} mapping {}",
+            "do_write_cow off_in_cls {:x} len {} mapping {}",
             off,
             buf.len(),
             &mapping,
         );
+
+        // compressed image does have l1 ready, but backing dev may not
+        if !compressed {
+            let _ = self.ensure_l2_offset(&split).await?;
+        }
         let l2_handle = self.get_l2_slice(&split).await?;
 
         // hold l2_table write lock, so that new mapping won't be flushed
@@ -1940,7 +1945,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         // someone may jump on this cluster at the same time,
         // just let _one_ of them to handle COW for compressed image
         let data_mapping = match l2_table.get_mapping(info, &split).source {
-            MappingSource::Compressed => {
+            MappingSource::Compressed | MappingSource::Backing => {
                 let mapping = self.alloc_and_map_cluster(&split, &mut l2_table).await?;
 
                 l2_handle.set_dirty(true);
@@ -1955,11 +1960,11 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         };
 
         match self
-            .do_write_data_file(off, true, &data_mapping, Some(mapping), buf)
+            .do_write_data_file(off, &data_mapping, Some(mapping), buf)
             .await
         {
             Err(e) => {
-                log::error!("compressed_cow: data write failed");
+                log::error!("do_write_cow: data write failed");
                 // recover to previous compressed mapping & free allocated
                 // clusters
                 let allocated_cls = data_mapping.cluster_offset.unwrap();
@@ -1994,22 +1999,26 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
                 // to disk
                 drop(l2_table);
 
-                // free clusters in original compressed mapping
-                // finally, this update needn't be flushed immediately,
-                // and can be update in ram
-                let l2_e =
-                    crate::meta::L2Entry::from_mapping(mapping.clone(), info.cluster_bits() as u32);
-                match l2_e.compressed_range(info.cluster_bits() as u32) {
-                    Some((off, length)) => {
-                        let mask = (!info.in_cluster_offset_mask) as u64;
-                        let start = off & mask;
-                        let end = (off + (length as u64)) & mask;
+                if compressed {
+                    // free clusters in original compressed mapping
+                    // finally, this update needn't be flushed immediately,
+                    // and can be update in ram
+                    let l2_e = crate::meta::L2Entry::from_mapping(
+                        mapping.clone(),
+                        info.cluster_bits() as u32,
+                    );
+                    match l2_e.compressed_range(info.cluster_bits() as u32) {
+                        Some((off, length)) => {
+                            let mask = (!info.in_cluster_offset_mask) as u64;
+                            let start = off & mask;
+                            let end = (off + (length as u64)) & mask;
 
-                        let cnt = (((end - start) as usize) >> info.cluster_bits()) + 1;
-                        self.free_clusters(start, cnt).await?
-                    }
-                    None => {
-                        eprintln!("compressed clusters leak caused by wrong mapping")
+                            let cnt = (((end - start) as usize) >> info.cluster_bits()) + 1;
+                            self.free_clusters(start, cnt).await?
+                        }
+                        None => {
+                            eprintln!("compressed clusters leak caused by wrong mapping")
+                        }
                     }
                 }
 
@@ -2064,9 +2073,22 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
     async fn __make_multiple_write_mapping(&self, start: u64, end: u64) -> Qcow2Result<usize> {
         // don't pre-allocate mapping for compressed and backing file
         fn need_make_mapping(mapping: &Mapping, info: &Qcow2Info) -> bool {
-            mapping.plain_offset(0).is_none()
-                && mapping.source != MappingSource::Compressed
-                && !info.has_back_file()
+            if mapping.plain_offset(0).is_some() {
+                return false;
+            }
+
+            if mapping.source == MappingSource::Compressed {
+                return false;
+            }
+
+            if info.has_back_file()
+                && (mapping.source == MappingSource::Backing
+                    || mapping.source == MappingSource::Unallocated)
+            {
+                return false;
+            }
+
+            return true;
         }
 
         let info = &self.info;
@@ -2160,7 +2182,6 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         &self,
         virt_off: u64,
         len: usize,
-        cow: bool,
         mapping: Mapping,
     ) -> Qcow2Result<Mapping> {
         match mapping.plain_offset(0) {
@@ -2169,7 +2190,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
                 let info = &self.info;
                 let single = (virt_off >> info.cluster_bits())
                     == ((virt_off + (len as u64) - 1) >> info.cluster_bits());
-                if cow || single {
+                if single {
                     self.make_single_write_mapping(virt_off).await
                 } else {
                     let cls_size = info.cluster_size() as u64;
@@ -2187,42 +2208,29 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
     async fn do_write(&self, off: u64, buf: &[u8], max_len: usize) -> Qcow2Result<()> {
         let info = &self.info;
         let mapping = self.get_mapping(off).await?;
-        let may_back_cow = info.has_back_file()
-            && match mapping.source {
-                MappingSource::Unallocated | MappingSource::Backing => true,
-                _ => false,
-            };
 
         log::trace!(
-            "do_write: offset {:x} len {} mapping {} cow_on_backdev {}",
+            "do_write: offset {:x} len {} mapping {}",
             off,
             buf.len(),
             &mapping,
-            may_back_cow
         );
 
-        // we deal with compressed cow in different code path
-        let mapping = if mapping.source != MappingSource::Compressed {
-            self.populate_mapping_for_write(off, max_len, may_back_cow, mapping)
-                .await?
-        } else {
-            mapping
-        };
-
         match mapping.source {
-            MappingSource::DataFile => {
-                self.do_write_data_file(
-                    off,
-                    may_back_cow && (buf.len() != info.cluster_size()),
-                    &mapping,
-                    None,
-                    buf,
-                )
-                .await
+            MappingSource::DataFile => self.do_write_data_file(off, &mapping, None, buf).await,
+            MappingSource::Backing | MappingSource::Unallocated if info.has_back_file() => {
+                self.do_write_cow(off, &mapping, buf).await
             }
-            MappingSource::Compressed => self.do_write_compressed(off, &mapping, buf).await,
-            MappingSource::Unallocated | MappingSource::Zero | MappingSource::Backing => {
-                Err("unexpected mapping for do_write".into())
+            MappingSource::Compressed => self.do_write_cow(off, &mapping, buf).await,
+            _ => {
+                let mapping = self
+                    .populate_mapping_for_write(off, max_len, mapping)
+                    .await?;
+                if mapping.source == MappingSource::DataFile {
+                    self.do_write_data_file(off, &mapping, None, buf).await
+                } else {
+                    Err("invalid mapping built".into())
+                }
             }
         }
     }
