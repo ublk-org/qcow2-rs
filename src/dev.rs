@@ -1931,98 +1931,90 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
             buf.len(),
             &mapping,
         );
-        let data_mapping = {
-            let l2_handle = self.get_l2_slice(&split).await?;
-            let mut l2_table = l2_handle.value().write().await;
+        let l2_handle = self.get_l2_slice(&split).await?;
 
-            // someone may jump on this cluster at the same time,
-            // just let _one_ of them to handle COW for compressed image
-            match l2_table.get_mapping(info, &split).source {
-                MappingSource::Compressed => {
-                    let mapping = self.alloc_and_map_cluster(&split, &mut l2_table).await?;
+        // hold l2_table write lock, so that new mapping won't be flushed
+        // to disk until cow is done
+        let mut l2_table = l2_handle.value().write().await;
 
-                    l2_handle.set_dirty(true);
-                    self.mark_need_flush(true);
-                    Some(mapping)
-                }
-                _ => None,
+        // someone may jump on this cluster at the same time,
+        // just let _one_ of them to handle COW for compressed image
+        let data_mapping = match l2_table.get_mapping(info, &split).source {
+            MappingSource::Compressed => {
+                let mapping = self.alloc_and_map_cluster(&split, &mut l2_table).await?;
+
+                l2_handle.set_dirty(true);
+                self.mark_need_flush(true);
+
+                mapping
+            }
+            _ => {
+                drop(l2_table);
+                return self.write_at_for_compressed(buf, off).await;
             }
         };
 
-        match data_mapping {
-            Some(m) => {
-                match self
-                    .do_write_data_file(off, true, &m, Some(mapping), buf)
-                    .await
-                {
-                    Err(e) => {
-                        log::error!("compressed_cow: data write failed");
-                        // recover to previous compressed mapping & free allocated
-                        // clusters
-                        let allocated_cls = m.cluster_offset.unwrap();
-                        self.free_clusters(allocated_cls, 1).await?;
-                        self.clear_new_cluster(allocated_cls >> info.cluster_bits())
-                            .await;
+        match self
+            .do_write_data_file(off, true, &data_mapping, Some(mapping), buf)
+            .await
+        {
+            Err(e) => {
+                log::error!("compressed_cow: data write failed");
+                // recover to previous compressed mapping & free allocated
+                // clusters
+                let allocated_cls = data_mapping.cluster_offset.unwrap();
+                self.free_clusters(allocated_cls, 1).await?;
+                self.clear_new_cluster(allocated_cls >> info.cluster_bits())
+                    .await;
 
-                        let l2_handle = self.get_l2_slice(&split).await?;
-                        let mut l2_table = l2_handle.value().write().await;
-                        l2_table.set(
-                            split.l2_slice_index(info),
-                            crate::meta::L2Entry::from_mapping(
-                                mapping.clone(),
-                                info.cluster_bits() as u32,
-                            ),
-                        );
+                l2_table.set(
+                    split.l2_slice_index(info),
+                    crate::meta::L2Entry::from_mapping(mapping.clone(), info.cluster_bits() as u32),
+                );
 
-                        Err(e)
+                Err(e)
+            }
+            Ok(_) => {
+                // respect meta update order, flush refcount meta,
+                // then flush this l2 table, then decrease the
+                // old cluster's reference count in ram
+
+                // flush refcount change, which is often small
+                // change
+                self.flush_refcount().await?;
+
+                // flush mapping table in-place update
+                let off = l2_table.get_offset().unwrap();
+                let buf =
+                    unsafe { std::slice::from_raw_parts(l2_table.as_ptr(), l2_table.byte_size()) };
+                self.call_write(off, buf).await?;
+                l2_handle.set_dirty(false);
+
+                // release l2 table, so that this new mapping can be flushed
+                // to disk
+                drop(l2_table);
+
+                // free clusters in original compressed mapping
+                // finally, this update needn't be flushed immediately,
+                // and can be update in ram
+                let l2_e =
+                    crate::meta::L2Entry::from_mapping(mapping.clone(), info.cluster_bits() as u32);
+                match l2_e.compressed_range(info.cluster_bits() as u32) {
+                    Some((off, length)) => {
+                        let mask = (!info.in_cluster_offset_mask) as u64;
+                        let start = off & mask;
+                        let end = (off + (length as u64)) & mask;
+
+                        let cnt = (((end - start) as usize) >> info.cluster_bits()) + 1;
+                        self.free_clusters(start, cnt).await?
                     }
-                    Ok(_) => {
-                        // respect meta update order, flush refcount meta,
-                        // then flush this l2 table, then decrease the
-                        // old cluster's reference count in ram
-
-                        // flush refcount change, which is often small
-                        // change
-                        self.flush_refcount().await?;
-
-                        {
-                            // flush mapping table in-place update
-                            let l2_handle = self.get_l2_slice(&split).await?;
-                            let l2_table = l2_handle.value().read().await;
-                            let off = l2_table.get_offset().unwrap();
-                            let buf = unsafe {
-                                std::slice::from_raw_parts(l2_table.as_ptr(), l2_table.byte_size())
-                            };
-                            self.call_write(off, buf).await?;
-                            l2_handle.set_dirty(false);
-                        }
-
-                        // free clusters in original compressed mapping
-                        // finally, this update needn't be flushed immediately,
-                        // and can be update in ram
-                        let l2_e = crate::meta::L2Entry::from_mapping(
-                            mapping.clone(),
-                            info.cluster_bits() as u32,
-                        );
-                        match l2_e.compressed_range(info.cluster_bits() as u32) {
-                            Some((off, length)) => {
-                                let mask = (!info.in_cluster_offset_mask) as u64;
-                                let start = off & mask;
-                                let end = (off + (length as u64)) & mask;
-
-                                let cnt = (((end - start) as usize) >> info.cluster_bits()) + 1;
-                                self.free_clusters(start, cnt).await?
-                            }
-                            None => {
-                                eprintln!("compressed clusters leak caused by wrong mapping")
-                            }
-                        }
-
-                        Ok(())
+                    None => {
+                        eprintln!("compressed clusters leak caused by wrong mapping")
                     }
                 }
+
+                Ok(())
             }
-            None => self.write_at_for_compressed(buf, off).await,
         }
     }
 
