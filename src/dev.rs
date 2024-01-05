@@ -1950,7 +1950,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
             }
             _ => {
                 drop(l2_table);
-                return self.write_at_for_compressed(buf, off).await;
+                return self.write_at_for_cow(buf, off).await;
             }
         };
 
@@ -2276,7 +2276,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
     }
 
     #[async_recursion(?Send)]
-    async fn write_at_for_compressed(&self, buf: &[u8], offset: u64) -> Qcow2Result<()> {
+    async fn write_at_for_cow(&self, buf: &[u8], offset: u64) -> Qcow2Result<()> {
         self.__write_at(buf, offset).await
     }
 
