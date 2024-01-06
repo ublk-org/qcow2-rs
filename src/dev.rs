@@ -509,7 +509,17 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
     #[inline]
     async fn call_discard(&self, offset: u64, len: usize, flags: i32) -> Qcow2Result<()> {
         log::trace!("discard_range off {:x} len {}", offset, len);
-        self.file.discard_range(offset, len, flags).await
+        let res = self.file.discard_range(offset, len, flags).await;
+        match res {
+            Err(_) => {
+                let mut zero_data = crate::page_aligned_vec!(u8, len);
+                zero_buf!(zero_data);
+
+                log::trace!("discard fallback off {:x} len {}", offset, len);
+                self.call_write(offset, &zero_data).await
+            }
+            Ok(_) => Ok(()),
+        }
     }
 
     async fn load_top_table<B: Table>(&self, top: &AsyncRwLock<B>, off: u64) -> Qcow2Result<usize> {
@@ -1845,7 +1855,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         let f_write = self.call_write(host_off + off_in_cls as u64, buf);
         let key = host_off >> info.cluster_bits();
 
-        let mut discards = Vec::new();
+        let mut discard = None;
         let cluster_lock = if self.cluster_is_new(key).await {
             let cls_map = self.new_cluster.read().await;
             // keep this cluster locked, so that concurrent discard can
@@ -1864,20 +1874,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
                 if *lock == false {
                     *lock = true;
 
-                    if !may_cow {
-                        if off_in_cls != 0 {
-                            discards.push(self.call_discard(host_off, off_in_cls, 0));
-                        }
-
-                        let off = off_in_cls + buf.len();
-                        if off < info.cluster_size() {
-                            discards.push(self.call_discard(
-                                host_off + off as u64,
-                                info.cluster_size() - off,
-                                0,
-                            ));
-                        }
-                    }
+                    discard = Some(self.call_discard(host_off, info.cluster_size(), 0));
                     Some(lock)
                 } else {
                     None
@@ -1890,9 +1887,10 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         };
 
         if let Some(lock) = cluster_lock {
-            if !discards.is_empty() {
-                futures::future::join_all(discards).await;
-            }
+            match discard {
+                Some(df) => df.await?,
+                None => {}
+            };
 
             let cow_res = match cow_mapping {
                 None => Ok(()),
