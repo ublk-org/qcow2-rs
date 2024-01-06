@@ -1064,7 +1064,7 @@ impl From<Box<[L1Entry]>> for L1Table {
 //
 //         56 - 61:    Reserved (set to 0)
 #[derive(Copy, Clone, Default, Debug)]
-pub struct L2Entry(u64);
+pub struct L2Entry(pub(crate) u64);
 
 /// Mapping represents the mapping of a cluster to a source of data
 /// Mapping and L2Entry can be converted to each other.
@@ -1364,6 +1364,12 @@ pub struct L2Table {
 }
 
 impl L2Table {
+    #[inline]
+    pub fn get_entry(&self, info: &Qcow2Info, lookup_addr: &SplitGuestOffset) -> L2Entry {
+        let l2_slice_index = lookup_addr.l2_slice_index(info);
+        self.get(l2_slice_index)
+    }
+
     #[inline]
     pub fn get_mapping(&self, info: &Qcow2Info, lookup_addr: &SplitGuestOffset) -> Mapping {
         let l2_slice_index = lookup_addr.l2_slice_index(info);

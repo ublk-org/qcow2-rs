@@ -3,7 +3,7 @@ use crate::cache::AsyncLruCacheEntry;
 use crate::error::Qcow2Result;
 use crate::helpers::qcow2_type_of;
 use crate::meta::{
-    L1Entry, L1Table, L2Table, Mapping, MappingSource, Qcow2Header, RefBlock, RefTable,
+    L1Entry, L1Table, L2Entry, L2Table, Mapping, MappingSource, Qcow2Header, RefBlock, RefTable,
     RefTableEntry, SplitGuestOffset, Table, TableEntry,
 };
 use crate::zero_buf;
@@ -1403,6 +1403,14 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
     }
 
     pub async fn get_mapping(&self, virtual_offset: u64) -> Qcow2Result<Mapping> {
+        let split = SplitGuestOffset(virtual_offset & !(self.info.in_cluster_offset_mask as u64));
+        let entry = self.get_l2_entry(virtual_offset).await?;
+
+        Ok(entry.into_mapping(&self.info, &split))
+    }
+
+    #[inline]
+    pub async fn get_l2_entry(&self, virtual_offset: u64) -> Qcow2Result<L2Entry> {
         let info = &self.info;
         let split = SplitGuestOffset(virtual_offset);
         let key = split.l2_slice_key(info);
@@ -1410,23 +1418,17 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         // fast path
         if let Some(res) = self.l2cache.get(key) {
             let l2_slice = res.value().read().await;
-            Ok(l2_slice.get_mapping(info, &split))
+            Ok(l2_slice.get_entry(info, &split))
         } else {
             let l1_entry = self.get_l1_entry(&split).await?;
 
             if l1_entry.is_zero() {
-                let in_cluster_offset = split.in_cluster_offset(&self.info);
-                return Ok(Mapping {
-                    source: MappingSource::Backing,
-                    cluster_offset: Some(virtual_offset - in_cluster_offset as u64),
-                    compressed_length: None,
-                    copied: false,
-                });
+                Ok(L2Entry(0))
+            } else {
+                let entry = self.get_l2_slice_slow(&l1_entry, &split).await?;
+                let l2_slice = entry.value().read().await;
+                Ok(l2_slice.get_entry(info, &split))
             }
-
-            let entry = self.get_l2_slice_slow(&l1_entry, &split).await?;
-            let l2_slice = entry.value().read().await;
-            Ok(l2_slice.get_mapping(info, &split))
         }
     }
 
