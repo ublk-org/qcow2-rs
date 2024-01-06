@@ -1592,7 +1592,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         let old_offset = offset;
         let old_len = len;
         let need_join =
-            (offset >> info.cluster_bits()) != ((offset + (len as u64)) >> info.cluster_bits());
+            (offset >> info.cluster_bits()) != ((offset + (len as u64) - 1) >> info.cluster_bits());
         let mut extra = 0;
 
         if offset >= vsize {
@@ -2311,6 +2311,8 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         let bs_mask = bs - 1;
         let mut len = buf.len();
         let old_offset = offset;
+        let need_join =
+            (offset >> info.cluster_bits()) != ((offset + (len as u64) - 1) >> info.cluster_bits());
 
         log::trace!("write_at offset {:x} len {} >>>", offset, buf.len());
 
@@ -2344,16 +2346,23 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
             let (iobuf, b) = remain.split_at(curr_len);
             remain = b;
 
-            writes.push(self.do_write(l2_entries[idx], offset, iobuf));
+            if need_join {
+                writes.push(self.do_write(l2_entries[idx], offset, iobuf));
+            } else {
+                self.do_write(l2_entries[idx], offset, iobuf).await?;
+            }
 
             offset += curr_len as u64;
             len -= curr_len;
             idx += 1;
         }
-        let res: Vec<_> = writes.collect().await;
-        for r in res {
-            if r.is_err() {
-                return Err("write_at: one write failed".into());
+
+        if need_join {
+            let res: Vec<_> = writes.collect().await;
+            for r in res {
+                if r.is_err() {
+                    return Err("write_at: one write failed".into());
+                }
             }
         }
 
