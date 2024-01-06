@@ -79,4 +79,9 @@ impl Qcow2IoOps for Qcow2IoUring {
 
         Ok(res)
     }
+
+    async fn fsync(&self, _offset: u64, _len: usize, _flags: i32) -> Qcow2Result<()> {
+        self.file.sync_all().await?;
+        Ok(())
+    }
 }

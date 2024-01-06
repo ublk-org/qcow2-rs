@@ -97,4 +97,10 @@ impl Qcow2IoOps for Qcow2IoSync {
 
         Ok(res)
     }
+
+    async fn fsync(&self, _offset: u64, _len: usize, _flags: i32) -> Qcow2Result<()> {
+        let res = nix::unistd::fsync(self.fd)?;
+
+        Ok(res)
+    }
 }

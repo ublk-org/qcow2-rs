@@ -29,6 +29,7 @@ pub trait Qcow2IoOps {
     async fn read_to(&self, offset: u64, buf: &mut [u8]) -> Qcow2Result<usize>;
     async fn write_from(&self, offset: u64, buf: &[u8]) -> Qcow2Result<()>;
     async fn discard_range(&self, offset: u64, len: usize, flags: i32) -> Qcow2Result<()>;
+    async fn fsync(&self, offset: u64, len: usize, flags: i32) -> Qcow2Result<()>;
 }
 
 /// all readable Qcow2 info, make it into single cache line
@@ -522,6 +523,13 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         }
     }
 
+    /// flush data range in (offset, len) to disk
+    #[inline]
+    async fn call_fsync(&self, offset: u64, len: usize, flags: i32) -> Qcow2Result<()> {
+        log::trace!("fsync off {:x} len {} flags {}", offset, len, flags);
+        self.file.fsync(offset, len, flags).await
+    }
+
     async fn load_top_table<B: Table>(&self, top: &AsyncRwLock<B>, off: u64) -> Qcow2Result<usize> {
         let mut t = top.write().await;
 
@@ -761,17 +769,22 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         cache: &AsyncLruCache<usize, AsyncRwLock<C>>,
         start: usize,
         end: usize,
-    ) -> Qcow2Result<()> {
+    ) -> Qcow2Result<bool> {
         let entries = cache.get_dirty_entries(start, end);
 
-        log::debug!(
-            "flush_cache: type {} {:x} - {:x}",
-            qcow2_type_of(cache),
-            start,
-            end,
-        );
+        if !entries.is_empty() {
+            log::debug!(
+                "flush_cache: type {} {:x} - {:x}",
+                qcow2_type_of(cache),
+                start,
+                end,
+            );
 
-        self.flush_cache_entries(entries).await
+            self.flush_cache_entries(entries).await?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
     }
 
     async fn flush_table<B: Table>(&self, t: &B, start: u32, size: usize) -> Qcow2Result<()> {
@@ -812,12 +825,17 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
             let start = key_fn((idx as u64) << bs_bits);
             let end = key_fn(((idx + 1) as u64) << bs_bits);
 
-            self.flush_cache(&cache, start, end).await?;
+            if self.flush_cache(&cache, start, end).await? {
+                // order cache flush and the upper layer table
+                self.call_fsync(0, usize::MAX, 0).await?;
+            }
             self.flush_table(rt, idx << bs_bits, 1 << bs_bits).await?;
             return Ok(false);
         } else {
             // flush cache without holding top table read lock
-            self.flush_cache(&cache, 0, usize::MAX).await?;
+            if self.flush_cache(&cache, 0, usize::MAX).await? {
+                self.call_fsync(0, usize::MAX, 0).await?;
+            }
             return Ok(true);
         }
     }
@@ -1913,6 +1931,8 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
             drop(lock);
             self.clear_new_cluster(key).await;
             if may_cow {
+                // make sure data flushed before updating mapping
+                self.call_fsync(host_off, info.cluster_size(), 0).await?;
                 return cow_res;
             }
         };
