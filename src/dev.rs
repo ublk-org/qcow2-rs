@@ -8,6 +8,7 @@ use crate::meta::{
 };
 use crate::zero_buf;
 use async_recursion::async_recursion;
+#[rustversion::before(1.75)]
 use async_trait::async_trait;
 use futures_locks::{RwLock as AsyncRwLock, RwLockWriteGuard as LockWriteGuard};
 use miniz_oxide::inflate::core::{decompress as inflate, DecompressorOxide};
@@ -24,7 +25,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 ///
 /// these methods are called for reading data from image, writing data
 /// to image, and discarding range.
-#[async_trait(?Send)]
+#[rustversion::attr(before(1.75), async_trait(?Send))]
+#[rustversion::attr(since(1.75), allow(async_fn_in_trait))]
 pub trait Qcow2IoOps {
     async fn read_to(&self, offset: u64, buf: &mut [u8]) -> Qcow2Result<usize>;
     async fn write_from(&self, offset: u64, buf: &[u8]) -> Qcow2Result<()>;

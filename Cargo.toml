@@ -39,6 +39,7 @@ miniz_oxide = { version = "0.6.2", features = ["std"] }
 futures = "0.3.29"
 log = {version = "0.4", features = ["release_max_level_off"]}
 env_logger = "0.9"
+rustversion = "1.0.14"
 
 [dev-dependencies]
 tempfile = "3.6.0"

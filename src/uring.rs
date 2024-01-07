@@ -1,6 +1,7 @@
 use crate::dev::Qcow2IoOps;
 use crate::error::Qcow2Result;
 use crate::helpers::slice_to_vec;
+#[rustversion::before(1.75)]
 use async_trait::async_trait;
 use nix::fcntl::{fallocate, FallocateFlags};
 use std::os::unix::io::AsRawFd;
@@ -30,7 +31,7 @@ impl Qcow2IoUring {
     }
 }
 
-#[async_trait(?Send)]
+#[rustversion::attr(before(1.75), async_trait(?Send))]
 impl Qcow2IoOps for Qcow2IoUring {
     async fn read_to(&self, offset: u64, buf: &mut [u8]) -> Qcow2Result<usize> {
         let ubuf = slice_to_vec::<u8>(buf);

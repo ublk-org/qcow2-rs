@@ -1,5 +1,6 @@
 use crate::dev::Qcow2IoOps;
 use crate::error::Qcow2Result;
+#[rustversion::before(1.75)]
 use async_trait::async_trait;
 use nix::fcntl::{fallocate, FallocateFlags};
 use std::cell::RefCell;
@@ -35,7 +36,7 @@ impl Qcow2IoSync {
     }
 }
 
-#[async_trait(?Send)]
+#[rustversion::attr(before(1.75), async_trait(?Send))]
 impl Qcow2IoOps for Qcow2IoSync {
     async fn read_to(&self, offset: u64, buf: &mut [u8]) -> Qcow2Result<usize> {
         let res = unsafe {
