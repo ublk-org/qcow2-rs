@@ -1460,6 +1460,54 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         }
     }
 
+    #[inline]
+    pub async fn get_l2_entres(&self, off: u64, len: usize) -> Qcow2Result<Vec<L2Entry>> {
+        let info = &self.info;
+        let start = off & (!(info.in_cluster_offset_mask) as u64);
+        let end = (off + ((len + info.cluster_size()) as u64) - 1)
+            & (!(info.in_cluster_offset_mask) as u64);
+        let mut entries = Vec::new();
+        let mut voff = start;
+
+        while voff < end {
+            let split = SplitGuestOffset(voff);
+            let key = split.l2_slice_key(info);
+
+            // fast path
+            let l2_slice = match self.l2cache.get(key) {
+                Some(res) => res.value().read().await,
+                None => {
+                    let l1_entry = self.get_l1_entry(&split).await?;
+
+                    if l1_entry.is_zero() {
+                        entries.push(L2Entry(0));
+                        voff += info.cluster_size() as u64;
+                        continue;
+                    } else {
+                        let entry = self.get_l2_slice_slow(&l1_entry, &split).await?;
+                        entry.value().read().await
+                    }
+                }
+            };
+
+            let this_end = {
+                let l2_slice_idx = split.l2_slice_index(info) as u32;
+                std::cmp::min(
+                    end,
+                    voff + (((info.l2_slice_entries - l2_slice_idx) as u64) << info.cluster_bits()),
+                )
+            };
+
+            for this_off in (voff..this_end).step_by(info.cluster_size()) {
+                let s = SplitGuestOffset(this_off);
+                entries.push(l2_slice.get_entry(info, &s));
+            }
+            voff = this_end;
+        }
+
+        Ok(entries)
+    }
+
     async fn do_read_compressed(
         &self,
         mapping: Mapping,
@@ -1560,12 +1608,11 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
     }
 
     #[inline]
-    async fn do_read(
-        &self,
-        mapping: Mapping,
-        off_in_cls: usize,
-        buf: &mut [u8],
-    ) -> Qcow2Result<usize> {
+    async fn do_read(&self, entry: L2Entry, offset: u64, buf: &mut [u8]) -> Qcow2Result<usize> {
+        let off_in_cls = (offset as usize) & self.info.in_cluster_offset_mask;
+        let split = SplitGuestOffset(offset - (off_in_cls as u64));
+        let mapping = entry.into_mapping(&self.info, &split);
+
         log::trace!(
             "do_read: {} off_in_cls {} len {}",
             mapping,
@@ -1575,9 +1622,13 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         match mapping.source {
             MappingSource::DataFile => self.do_read_data_file(mapping, off_in_cls, buf).await,
             MappingSource::Zero | MappingSource::Unallocated => {
+                let mapping = self.get_mapping(offset).await?;
                 self.do_read_zero(mapping, off_in_cls, buf).await
             }
-            MappingSource::Backing => self.do_read_backing(mapping, off_in_cls, buf).await,
+            MappingSource::Backing => {
+                let mapping = self.get_mapping(offset).await?;
+                self.do_read_backing(mapping, off_in_cls, buf).await
+            }
             MappingSource::Compressed => self.do_read_compressed(mapping, off_in_cls, buf).await,
         }
     }
@@ -1633,6 +1684,13 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         let mut first_len = 0;
         let mut last_len = 0;
         let mut s = 0;
+        let mut idx = 0;
+        let l2_entries = if need_join {
+            self.get_l2_entres(offset, len).await?
+        } else {
+            vec![self.get_l2_entry(offset).await?]
+        };
+
         while len > 0 {
             let in_cluster_offset = offset as usize & info.in_cluster_offset_mask;
             let curr_len = std::cmp::min(info.cluster_size() - in_cluster_offset, len);
@@ -1643,13 +1701,10 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
                 first_len = curr_len;
             }
 
-            let mapping = self.get_mapping(offset).await?;
-            //println!("virt_off {}, mapping {}", offset, mapping);
-
             if need_join {
-                reads.push(self.do_read(mapping, in_cluster_offset, iobuf));
+                reads.push(self.do_read(l2_entries[idx], offset, iobuf));
             } else {
-                s = self.do_read(mapping, in_cluster_offset, iobuf).await?;
+                s = self.do_read(l2_entries[idx], offset, iobuf).await?;
             }
 
             offset += curr_len as u64;
@@ -1658,6 +1713,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
             if len == 0 {
                 last_len = curr_len;
             }
+            idx += 1;
         }
 
         if need_join {
