@@ -4,15 +4,18 @@
 [![license](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://github.com/ming1/qcow2-rs/blob/master/LICENSE-APACHE)
 
 Library in qcow2-rs is for reading/writing data from qcow2 image, and
-it supports the following features:
+follows its features:
 
 - async/await, support multiple io engines, verified on tokio-uring, raw
-linux sync IO syscall and io-uring[^3] with smol[^2] runtime, and direct IO is
-allowed with tokio-uring
+linux sync IO syscall and io-uring[^3] with smol[^2] runtime
+
+- support both direct IO and buffered IO, for direct IO, it needs async
+runtime support, such as tokio doesn't allow it.
 
 - basic read/write function on data file, backing file and compressed image
 
-- l2 table & refcount block slice load & store
+- l2 table & refcount block load & store in slice way, and the minimized
+slice size is block size, and the maximized size is cluster size
 
 - block device like interface, minimized read/write unit is aligned with
 block size of the FS qcow2 image
@@ -20,12 +23,13 @@ block size of the FS qcow2 image
 This project is based on qcow2 implementation from `rsd`[^1]
 
 Motivation of this project is for supporting ublk-qcow2[^4], but turns out it
-becomes one generic async qcow2 library.
+becomes one generic async qcow2 library. Attributed to Rust async/.await,
+the lib is well designed & implemented, and easy to extend(add new features,
+improve, ...)
 
-Also one utility is included in this project, which can dump qcow2 meta,
+One utility is included in this project, which can dump qcow2 meta,
 show any meta related statistics of the image, check image meta integrity &
-host cluster leak, format qcow2 image, ..., and could provide more information
-compared with `qemu-img`.
+host cluster leak, format qcow2 image, ....
 
 ## Example
 
