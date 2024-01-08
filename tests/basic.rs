@@ -799,4 +799,30 @@ mod integretion {
             assert!(wbuf_md5 == rbuf_md5);
         });
     }
+
+    #[test]
+    fn test_qcow2_dev_shrink_cache() {
+        tokio_uring::start(async move {
+            let size = 8_u64 << 20;
+            let cluster_bits = 16;
+            let img_file = make_temp_qcow2_img(size, cluster_bits, 4);
+            let path = PathBuf::from(img_file.path());
+            let params = qcow2_default_params!(false, true);
+            let dev = std::rc::Rc::new(qcow2_setup_dev_uring(&path, &params).await.unwrap());
+
+            let input = vec![(0x0, 8192)];
+            test_qcow2_dev_write_verify(&dev, input).await;
+            assert!(!dev.refblock_cache_is_empty() && !dev.l2_cache_is_empty());
+            dev.shrink_caches().await.unwrap();
+            assert!(dev.refblock_cache_is_empty() && dev.l2_cache_is_empty());
+
+            let input = vec![(4 << 20, 8192)];
+            test_qcow2_dev_write_verify(&dev, input).await;
+            assert!(!dev.refblock_cache_is_empty() && !dev.l2_cache_is_empty());
+            dev.shrink_caches().await.unwrap();
+            assert!(dev.refblock_cache_is_empty() && dev.l2_cache_is_empty());
+
+            dev.check().await.unwrap();
+        });
+    }
 }

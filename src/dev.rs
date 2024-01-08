@@ -766,6 +766,26 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         Ok(())
     }
 
+    /// if the refblock cache for holding refcount block slice is empty
+    pub fn refblock_cache_is_empty(&self) -> bool {
+        self.refblock_cache.is_empty()
+    }
+
+    /// if the l2 cache for holding l2 slice is empty
+    pub fn l2_cache_is_empty(&self) -> bool {
+        self.l2cache.is_empty()
+    }
+
+    /// shrink both refblock and l2 caches, so the memory can be
+    /// released, often called when qcow2 device is idle
+    pub async fn shrink_caches(&self) -> Qcow2Result<()> {
+        self.flush_meta().await?;
+        self.refblock_cache.shrink();
+        self.l2cache.shrink();
+
+        Ok(())
+    }
+
     async fn flush_cache<C: Table>(
         &self,
         cache: &AsyncLruCache<usize, AsyncRwLock<C>>,

@@ -111,6 +111,27 @@ impl<K: Clone + PartialEq + Eq + Hash + std::fmt::Debug + std::cmp::PartialOrd, 
         }
     }
 
+    pub fn is_empty(&self) -> bool {
+        let map = self.rmap.read().unwrap();
+
+        map.is_empty()
+    }
+
+    pub fn shrink(&self) {
+        let mut map = self.rmap.write().unwrap();
+        let mut k_vec = Vec::new();
+
+        for (key, value) in map.iter() {
+            let k = key.clone();
+            if Arc::strong_count(&value) <= 1 && !value.is_dirty() {
+                k_vec.push(k);
+            }
+        }
+        for k in k_vec {
+            map.remove(&k);
+        }
+    }
+
     pub fn get_dirty_entries(&self, start: K, end: K) -> Vec<(K, AsyncLruCacheEntry<V>)> {
         let map = self.rmap.read().unwrap();
         let mut vec = Vec::new();
