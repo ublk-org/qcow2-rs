@@ -863,6 +863,11 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         Ok(())
     }
 
+    /// for flushing data in the qcow2 virtual range to disk
+    pub async fn fsync_range(&self, off: u64, len: usize) -> Qcow2Result<()> {
+        self.call_fsync(off, len, 0).await
+    }
+
     pub async fn flush_meta(&self) -> Qcow2Result<()> {
         let info = &self.info;
 
