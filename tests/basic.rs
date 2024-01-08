@@ -283,7 +283,7 @@ mod integretion {
             dev.check().await.unwrap();
 
             let input = vec![(0x108000, 8192), (0x10b000, 4096)];
-            __test_qcow2_dev_partial_writes_on_cluster(&dev, input).await;
+            test_qcow2_dev_write_verify(&dev, input).await;
         });
     }
 
@@ -636,7 +636,7 @@ mod integretion {
         });
     }
 
-    async fn __test_qcow2_dev_partial_writes_on_cluster<T: Qcow2IoOps + 'static>(
+    async fn test_qcow2_dev_write_verify<T: Qcow2IoOps + 'static>(
         dev_rc: &Rc<Qcow2Dev<T>>,
         input: Vec<(u64, usize)>,
     ) {
@@ -682,7 +682,7 @@ mod integretion {
 
             let dev = std::rc::Rc::new(qcow2_setup_dev_uring(&path, &params).await.unwrap());
             let input = vec![(0x108000, 8192), (0x10b000, 4096)];
-            __test_qcow2_dev_partial_writes_on_cluster(&dev, input).await;
+            test_qcow2_dev_write_verify(&dev, input).await;
         });
     }
 
@@ -701,7 +701,7 @@ mod integretion {
             assert!(!dev.info.is_back_file());
 
             let input = vec![(0x108000, 8192), (0x10b000, 4096)];
-            __test_qcow2_dev_partial_writes_on_cluster(&dev, input).await;
+            test_qcow2_dev_write_verify(&dev, input).await;
         });
     }
 
