@@ -2318,40 +2318,39 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         Ok(l2_entries)
     }
 
+    async fn populate_single_write_mapping(&self, virt_off: u64) -> Qcow2Result<L2Entry> {
+        let info = &self.info;
+        let entry = self.get_l2_entry(virt_off).await?;
+        let split = SplitGuestOffset(virt_off);
+        let mapping = entry.into_mapping(info, &split);
+
+        let entry = if Self::need_make_mapping(&mapping, info) {
+            self.make_single_write_mapping(virt_off).await?
+        } else {
+            entry
+        };
+
+        Ok(entry)
+    }
+
     /// populate mapping for write at batch, and this way may improve
     /// perf a lot for big sequential IO, cause all meta setup can be
     /// one in single place, then data write IO can be run concurrently
     /// without lock contention
     #[inline]
-    async fn populate_mapping_for_write(
+    async fn populate_write_mappings(
         &self,
         virt_off: u64,
         len: usize,
     ) -> Qcow2Result<Vec<L2Entry>> {
         let info = &self.info;
-        let single = (virt_off >> info.cluster_bits())
-            == ((virt_off + (len as u64) - 1) >> info.cluster_bits());
-        if single {
-            let entry = self.get_l2_entry(virt_off).await?;
-            let split = SplitGuestOffset(virt_off);
-            let mapping = entry.into_mapping(info, &split);
+        let cls_size = info.cluster_size() as u64;
+        let start = virt_off & !(cls_size - 1);
+        let end = (virt_off + (len as u64) + cls_size - 1) & !(cls_size - 1);
 
-            let entry = if Self::need_make_mapping(&mapping, info) {
-                self.make_single_write_mapping(virt_off).await?
-            } else {
-                entry
-            };
+        let entries = self.make_multiple_write_mappings(start, end).await?;
 
-            Ok(vec![entry])
-        } else {
-            let cls_size = info.cluster_size() as u64;
-            let start = virt_off & !(cls_size - 1);
-            let end = (virt_off + (len as u64) + cls_size - 1) & !(cls_size - 1);
-
-            let entries = self.make_multiple_write_mappings(start, end).await?;
-
-            Ok(entries)
-        }
+        Ok(entries)
     }
 
     async fn do_write(&self, l2_e: L2Entry, off: u64, buf: &[u8]) -> Qcow2Result<()> {
@@ -2394,8 +2393,8 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         let bs_mask = bs - 1;
         let mut len = buf.len();
         let old_offset = offset;
-        let need_join =
-            (offset >> info.cluster_bits()) != ((offset + (len as u64) - 1) >> info.cluster_bits());
+        let single =
+            (offset >> info.cluster_bits()) == ((offset + (len as u64) - 1) >> info.cluster_bits());
 
         log::trace!("write_at offset {:x} len {} >>>", offset, buf.len());
 
@@ -2419,28 +2418,27 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
             return Err("write_at: write to read-only image".into());
         }
 
-        let writes = FuturesUnordered::new();
-        let mut remain = buf;
-        let mut idx = 0;
-        let l2_entries = self.populate_mapping_for_write(offset, len).await?;
-        while len > 0 {
-            let in_cluster_offset = offset as usize & info.in_cluster_offset_mask;
-            let curr_len = std::cmp::min(info.cluster_size() - in_cluster_offset, len);
-            let (iobuf, b) = remain.split_at(curr_len);
-            remain = b;
+        if single {
+            let l2_entry = self.populate_single_write_mapping(offset).await?;
+            self.do_write(l2_entry, offset, buf).await?;
+        } else {
+            let writes = FuturesUnordered::new();
+            let mut remain = buf;
+            let mut idx = 0;
+            let l2_entries = self.populate_write_mappings(offset, len).await?;
+            while len > 0 {
+                let in_cluster_offset = offset as usize & info.in_cluster_offset_mask;
+                let curr_len = std::cmp::min(info.cluster_size() - in_cluster_offset, len);
+                let (iobuf, b) = remain.split_at(curr_len);
+                remain = b;
 
-            if need_join {
                 writes.push(self.do_write(l2_entries[idx], offset, iobuf));
-            } else {
-                self.do_write(l2_entries[idx], offset, iobuf).await?;
+
+                offset += curr_len as u64;
+                len -= curr_len;
+                idx += 1;
             }
 
-            offset += curr_len as u64;
-            len -= curr_len;
-            idx += 1;
-        }
-
-        if need_join {
             let res: Vec<_> = writes.collect().await;
             for r in res {
                 if r.is_err() {
