@@ -1669,9 +1669,8 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         let mut len = buf.len();
         let old_offset = offset;
         let old_len = len;
-        let need_join =
-            (offset >> info.cluster_bits()) != ((offset + (len as u64) - 1) >> info.cluster_bits());
-        let mut extra = 0;
+        let single =
+            (offset >> info.cluster_bits()) == ((offset + (len as u64) - 1) >> info.cluster_bits());
 
         if offset >= vsize {
             if !info.is_back_file() {
@@ -1698,52 +1697,52 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
 
         log::trace!("read_at: offset {:x} len {} >>>", offset, buf.len());
 
-        if offset + (len as u64) > vsize {
+        let extra = if offset + (len as u64) > vsize {
             len = ((offset + (len as u64) - vsize + bs as u64 - 1) as usize) & !bs_mask;
             if info.is_back_file() {
-                extra = buf.len() - len;
+                buf.len() - len
+            } else {
+                0
             }
-        }
-        debug_assert!((len & bs_mask) == 0);
-
-        let mut reads = Vec::new();
-        let mut remain = buf;
-        let mut first_len = 0;
-        let mut last_len = 0;
-        let mut s = 0;
-        let mut idx = 0;
-        let l2_entries = if need_join {
-            self.get_l2_entres(offset, len).await?
         } else {
-            vec![self.get_l2_entry(offset).await?]
+            0
         };
 
-        while len > 0 {
-            let in_cluster_offset = offset as usize & info.in_cluster_offset_mask;
-            let curr_len = std::cmp::min(info.cluster_size() - in_cluster_offset, len);
-            let (iobuf, b) = remain.split_at_mut(curr_len);
-            remain = b;
+        debug_assert!((len & bs_mask) == 0);
 
-            if first_len == 0 {
-                first_len = curr_len;
-            }
+        let done = if single {
+            let l2_entry = self.get_l2_entry(offset).await?;
 
-            if need_join {
+            self.do_read(l2_entry, offset, buf).await?
+        } else {
+            let mut reads = Vec::new();
+            let mut remain = buf;
+            let mut first_len = 0;
+            let mut last_len = 0;
+            let mut idx = 0;
+            let mut s = 0;
+            let l2_entries = self.get_l2_entres(offset, len).await?;
+
+            while len > 0 {
+                let in_cluster_offset = offset as usize & info.in_cluster_offset_mask;
+                let curr_len = std::cmp::min(info.cluster_size() - in_cluster_offset, len);
+                let (iobuf, b) = remain.split_at_mut(curr_len);
+                remain = b;
+
+                if first_len == 0 {
+                    first_len = curr_len;
+                }
+
                 reads.push(self.do_read(l2_entries[idx], offset, iobuf));
-            } else {
-                s = self.do_read(l2_entries[idx], offset, iobuf).await?;
+
+                offset += curr_len as u64;
+                len -= curr_len;
+                if len == 0 {
+                    last_len = curr_len;
+                }
+                idx += 1;
             }
 
-            offset += curr_len as u64;
-            len -= curr_len;
-
-            if len == 0 {
-                last_len = curr_len;
-            }
-            idx += 1;
-        }
-
-        if need_join {
             let res = futures::future::join_all(reads).await;
             for i in 0..res.len() {
                 let exp = if i == 0 {
@@ -1764,14 +1763,16 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
                     Err(_) => break,
                 };
             }
-        }
+            s
+        };
+
         log::trace!(
             "read_at: offset {:x} len {} res {} <<<",
             old_offset,
             old_len,
-            s
+            done
         );
-        Ok(s + extra)
+        Ok(done + extra)
     }
 
     #[async_recursion(?Send)]
