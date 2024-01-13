@@ -89,6 +89,7 @@ macro_rules! qcow2_setup_dev_fn {
 }
 
 qcow2_setup_dev_fn!(Qcow2IoUring, qcow2_setup_dev_uring);
+qcow2_setup_dev_fn!(crate::tokio_io::Qcow2IoTokio, qcow2_setup_dev_tokio);
 
 #[macro_export]
 macro_rules! qcow2_setup_dev_fn_sync {

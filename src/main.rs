@@ -6,8 +6,10 @@ use qcow2_rs::meta::{
     L1Table, L2Table, Qcow2FeatureType, Qcow2Header, RefBlock, RefTable, Table, TableEntry,
 };
 use qcow2_rs::page_aligned_vec;
+use qcow2_rs::utils::qcow2_setup_dev_tokio;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
+use tokio::runtime::Runtime;
 
 #[derive(Args, Debug)]
 pub struct CheckArgs {
@@ -466,11 +468,10 @@ fn format_qcow2(args: FormatArgs) -> Qcow2Result<()> {
 }
 
 fn map_qcow2(args: MapArgs) -> Qcow2Result<()> {
-    tokio_uring::start(async move {
-        let p = qcow2_rs::qcow2_default_params!(false, true);
-        let dev = qcow2_rs::utils::qcow2_setup_dev_uring(&args.file, &p)
-            .await
-            .unwrap();
+    let rt = Runtime::new().unwrap();
+    rt.block_on(async move {
+        let p = qcow2_rs::qcow2_default_params!(false, false);
+        let dev = qcow2_setup_dev_tokio(&args.file, &p).await.unwrap();
         let mut start = args.addr & !dev.info.in_cluster_offset_mask as u64;
 
         let mut i = 0;
@@ -490,14 +491,13 @@ fn map_qcow2(args: MapArgs) -> Qcow2Result<()> {
 }
 
 fn cluster_qcow2(args: ClusterArgs) -> Qcow2Result<()> {
-    tokio_uring::start(async move {
+    let rt = Runtime::new().unwrap();
+    rt.block_on(async move {
         let slice_bits = args.slice_size.ilog2().try_into().unwrap();
         let rb_cache = Some((slice_bits, args.max_slices << slice_bits));
-        let p = qcow2_rs::dev::Qcow2DevParams::new(9, rb_cache, None, false, true);
+        let p = qcow2_rs::dev::Qcow2DevParams::new(9, rb_cache, None, false, false);
 
-        let dev = qcow2_rs::utils::qcow2_setup_dev_uring(&args.file, &p)
-            .await
-            .unwrap();
+        let dev = qcow2_setup_dev_tokio(&args.file, &p).await.unwrap();
 
         if args.alloc {
             let res = dev.allocate_clusters(args.number).await.unwrap().unwrap();
@@ -527,11 +527,10 @@ fn cluster_qcow2(args: ClusterArgs) -> Qcow2Result<()> {
 }
 
 fn info_qcow2(args: InfoArgs) -> Qcow2Result<()> {
-    tokio_uring::start(async move {
-        let p = qcow2_rs::qcow2_default_params!(true, true);
-        let dev = qcow2_rs::utils::qcow2_setup_dev_uring(&args.file, &p)
-            .await
-            .unwrap();
+    let rt = Runtime::new().unwrap();
+    rt.block_on(async move {
+        let p = qcow2_rs::qcow2_default_params!(true, false);
+        let dev = qcow2_setup_dev_tokio(&args.file, &p).await.unwrap();
         let info = &dev.info;
         println!("{:?}", dev);
 
@@ -610,11 +609,10 @@ fn info_qcow2(args: InfoArgs) -> Qcow2Result<()> {
 }
 
 fn read_qcow2(args: ReadArgs) -> Qcow2Result<()> {
-    tokio_uring::start(async move {
-        let p = qcow2_rs::qcow2_default_params!(false, true);
-        let dev = qcow2_rs::utils::qcow2_setup_dev_uring(&args.file, &p)
-            .await
-            .unwrap();
+    let rt = Runtime::new().unwrap();
+    rt.block_on(async move {
+        let p = qcow2_rs::qcow2_default_params!(false, false);
+        let dev = qcow2_setup_dev_tokio(&args.file, &p).await.unwrap();
         let len = args.len;
         let bs_mask = (1_u64 << dev.info.block_size_shift) - 1;
 
@@ -639,11 +637,10 @@ fn read_qcow2(args: ReadArgs) -> Qcow2Result<()> {
 }
 
 fn write_qcow2(args: WriteArgs) -> Qcow2Result<()> {
-    tokio_uring::start(async move {
-        let p = qcow2_rs::qcow2_default_params!(false, true);
-        let dev = qcow2_rs::utils::qcow2_setup_dev_uring(&args.file, &p)
-            .await
-            .unwrap();
+    let rt = Runtime::new().unwrap();
+    rt.block_on(async move {
+        let p = qcow2_rs::qcow2_default_params!(false, false);
+        let dev = qcow2_setup_dev_tokio(&args.file, &p).await.unwrap();
         let len = args.len;
         let bs_mask = (1_u64 << dev.info.block_size_shift) - 1;
 
@@ -669,11 +666,11 @@ fn write_qcow2(args: WriteArgs) -> Qcow2Result<()> {
 }
 
 fn check_qcow2(args: CheckArgs) -> Qcow2Result<()> {
-    tokio_uring::start(async move {
-        let p = qcow2_rs::qcow2_default_params!(false, true);
-        let dev = qcow2_rs::utils::qcow2_setup_dev_uring(&args.file, &p)
-            .await
-            .unwrap();
+    let rt = Runtime::new().unwrap();
+
+    rt.block_on(async move {
+        let p = qcow2_rs::qcow2_default_params!(false, false);
+        let dev = qcow2_setup_dev_tokio(&args.file, &p).await.unwrap();
 
         dev.check().await.expect("check failed");
     });

@@ -5,5 +5,6 @@ pub mod helpers;
 pub mod meta;
 pub mod ops;
 pub mod sync_io;
+pub mod tokio_io;
 pub mod uring;
 pub mod utils;
