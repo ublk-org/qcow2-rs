@@ -88,7 +88,7 @@ impl Qcow2IoOps for Qcow2IoSync {
         }
     }
 
-    async fn discard_range(&self, offset: u64, len: usize, _flags: i32) -> Qcow2Result<()> {
+    async fn fallocate(&self, offset: u64, len: usize, _flags: u32) -> Qcow2Result<()> {
         let res = fallocate(
             self.fd,
             FallocateFlags::FALLOC_FL_PUNCH_HOLE | FallocateFlags::FALLOC_FL_KEEP_SIZE,
@@ -99,7 +99,7 @@ impl Qcow2IoOps for Qcow2IoSync {
         Ok(res)
     }
 
-    async fn fsync(&self, _offset: u64, _len: usize, _flags: i32) -> Qcow2Result<()> {
+    async fn fsync(&self, _offset: u64, _len: usize, _flags: u32) -> Qcow2Result<()> {
         let res = nix::unistd::fsync(self.fd)?;
 
         Ok(res)

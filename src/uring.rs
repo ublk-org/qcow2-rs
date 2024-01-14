@@ -57,7 +57,7 @@ impl Qcow2IoOps for Qcow2IoUring {
         }
     }
 
-    async fn discard_range(&self, offset: u64, len: usize, _flags: i32) -> Qcow2Result<()> {
+    async fn fallocate(&self, offset: u64, len: usize, _flags: u32) -> Qcow2Result<()> {
         // tokio-uring github fallocate
         /*
         let res = self
@@ -81,7 +81,7 @@ impl Qcow2IoOps for Qcow2IoUring {
         Ok(res)
     }
 
-    async fn fsync(&self, _offset: u64, _len: usize, _flags: i32) -> Qcow2Result<()> {
+    async fn fsync(&self, _offset: u64, _len: usize, _flags: u32) -> Qcow2Result<()> {
         self.file.sync_all().await?;
         Ok(())
     }

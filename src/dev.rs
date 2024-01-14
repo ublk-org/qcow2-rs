@@ -495,9 +495,9 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
     }
 
     #[inline]
-    async fn call_discard(&self, offset: u64, len: usize, flags: i32) -> Qcow2Result<()> {
-        log::trace!("discard_range off {:x} len {}", offset, len);
-        let res = self.file.discard_range(offset, len, flags).await;
+    async fn call_fallocate(&self, offset: u64, len: usize, flags: u32) -> Qcow2Result<()> {
+        log::trace!("fallocate off {:x} len {}", offset, len);
+        let res = self.file.fallocate(offset, len, flags).await;
         match res {
             Err(_) => {
                 let mut zero_data = crate::page_aligned_vec!(u8, len);
@@ -512,7 +512,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
 
     /// flush data range in (offset, len) to disk
     #[inline]
-    async fn call_fsync(&self, offset: u64, len: usize, flags: i32) -> Qcow2Result<()> {
+    async fn call_fsync(&self, offset: u64, len: usize, flags: u32) -> Qcow2Result<()> {
         log::trace!("fsync off {:x} len {} flags {}", offset, len, flags);
         self.file.fsync(offset, len, flags).await
     }
@@ -692,7 +692,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
                                         // grabbing write lock
                                         *locked_cls = true;
                                         if cls_map.contains_key(&key) {
-                                            f_vec.push(self.call_discard(
+                                            f_vec.push(self.call_fallocate(
                                                 cache_off & !((1 << info.cluster_bits()) - 1),
                                                 1 << info.cluster_bits(),
                                                 0,
@@ -951,7 +951,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
 
         let cls = HostCluster(refblock_offset);
 
-        let rb_before = self.call_discard(
+        let rb_before = self.call_fallocate(
             cls.rb_slice_host_start(info),
             (refblock_offset - cls.rb_slice_host_start(info))
                 .try_into()
@@ -959,7 +959,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
             0,
         );
         let rb = self.flush_table(&new_refblock, 0, new_refblock.byte_size());
-        let rb_after = self.call_discard(
+        let rb_after = self.call_fallocate(
             refblock_offset + rb_size as u64,
             (cls.rb_slice_host_end(info) as usize - refblock_offset as usize - rb_size)
                 .try_into()
@@ -1961,7 +1961,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
                 if *lock == false {
                     *lock = true;
 
-                    discard = Some(self.call_discard(host_off, info.cluster_size(), 0));
+                    discard = Some(self.call_fallocate(host_off, info.cluster_size(), 0));
                     Some(lock)
                 } else {
                     None
