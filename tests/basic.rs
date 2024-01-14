@@ -4,7 +4,7 @@ mod integretion {
     use qcow2_rs::dev::*;
     use qcow2_rs::meta::*;
     use qcow2_rs::ops::*;
-    use qcow2_rs::uring::*;
+    use qcow2_rs::tokio_io::*;
     use qcow2_rs::utils::*;
     use qcow2_rs::{page_aligned_vec, qcow2_default_params};
     use rand::Rng;
@@ -13,6 +13,7 @@ mod integretion {
     use std::process::Command;
     use std::rc::Rc;
     use std::time::Instant;
+    use tokio::runtime::Runtime;
 
     fn run_shell_cmd(p: &str) {
         //println!("Run shell command {}", p);
@@ -156,7 +157,7 @@ mod integretion {
     //so far only support 2 level backing device
     async fn calculate_qcow2_data_md5_sync(qcow2f: &tempfile::NamedTempFile, size: u64) -> String {
         let path = PathBuf::from(qcow2f.path());
-        let params = qcow2_default_params!(true, true);
+        let params = qcow2_default_params!(true, false);
         let dev = qcow2_setup_dev_sync(&path, &params).unwrap();
 
         dev.qcow2_prep_io().await.unwrap();
@@ -174,8 +175,8 @@ mod integretion {
         size: u64,
     ) -> String {
         let path = PathBuf::from(qcow2f.path());
-        let params = qcow2_default_params!(true, true);
-        let dev = qcow2_setup_dev_uring(&path, &params).await.unwrap();
+        let params = qcow2_default_params!(true, false);
+        let dev = qcow2_setup_dev_tokio(&path, &params).await.unwrap();
 
         let mut buf = page_aligned_vec!(u8, size as usize);
         dev.read_at(&mut buf, off).await.unwrap();
@@ -185,10 +186,11 @@ mod integretion {
 
     #[test]
     fn test_qcow2_dev_io() {
-        tokio_uring::start(async move {
+        let rt = Runtime::new().unwrap();
+        rt.block_on(async move {
             let size = 64_u64 << 20;
             let img_file = make_temp_qcow2_img(size, 16, 4);
-            let io = Qcow2IoUring::new(&img_file.path().to_path_buf(), true, true).await;
+            let io = Qcow2IoTokio::new(&img_file.path().to_path_buf(), true, false).await;
             let mut buf = page_aligned_vec!(u8, 4096);
             let _ = io.read_to(0, &mut buf).await;
             let header = Qcow2Header::from_buf(&buf).unwrap();
@@ -200,13 +202,14 @@ mod integretion {
 
     #[test]
     fn test_qcow2_dev_read_null() {
-        tokio_uring::start(async move {
+        let rt = Runtime::new().unwrap();
+        rt.block_on(async move {
             let size = 64_u64 << 20;
             let cluster_bits = 16;
             let img_file = make_temp_qcow2_img(size, cluster_bits, 4);
             let path = PathBuf::from(img_file.path());
-            let params = qcow2_default_params!(true, true);
-            let dev = qcow2_setup_dev_uring(&path, &params).await.unwrap();
+            let params = qcow2_default_params!(true, false);
+            let dev = qcow2_setup_dev_tokio(&path, &params).await.unwrap();
 
             let mut buf = page_aligned_vec!(u8, 1 << cluster_bits);
             dev.read_at(&mut buf, 0).await.unwrap();
@@ -215,7 +218,8 @@ mod integretion {
 
     #[test]
     fn test_qcow2_dev_read_data() {
-        tokio_uring::start(async move {
+        let rt = Runtime::new().unwrap();
+        rt.block_on(async move {
             let size = 2_u64 << 20;
             let cluster_bits = 16;
             let (rawf, qcow2f) = make_rand_qcow2_img(size, cluster_bits);
@@ -230,7 +234,8 @@ mod integretion {
 
     #[test]
     fn test_qcow2_dev_read_data_sync() {
-        tokio_uring::start(async move {
+        let rt = Runtime::new().unwrap();
+        rt.block_on(async move {
             let size = 2_u64 << 20;
             let cluster_bits = 16;
             let (rawf, qcow2f) = make_rand_qcow2_img(size, cluster_bits);
@@ -245,7 +250,8 @@ mod integretion {
 
     #[test]
     fn test_qcow2_dev_read_compressed_data() {
-        tokio_uring::start(async move {
+        let rt = Runtime::new().unwrap();
+        rt.block_on(async move {
             let size = 4_u64 << 20;
             let cluster_bits = 16;
             let (rawf, qcow2f) = make_compressed_qcow2_img(size, cluster_bits);
@@ -260,7 +266,8 @@ mod integretion {
 
     #[test]
     fn test_qcow2_dev_write_compressed_data() {
-        tokio_uring::start(async move {
+        let rt = Runtime::new().unwrap();
+        rt.block_on(async move {
             let size = 4_u64 << 20;
             let cluster_bits = 16;
             let (rawf, qcow2f) = make_compressed_qcow2_img(size, cluster_bits);
@@ -271,14 +278,15 @@ mod integretion {
 
     #[test]
     fn test_qcow2_dev_partial_writes_on_cluster_compressed() {
-        tokio_uring::start(async move {
+        let rt = Runtime::new().unwrap();
+        rt.block_on(async move {
             let size = 4_u64 << 20;
             let cluster_bits = 16;
             let (_, qcow2f) = make_compressed_qcow2_img(size, cluster_bits);
             let path = PathBuf::from(qcow2f.path());
-            let params = qcow2_default_params!(false, true);
+            let params = qcow2_default_params!(false, false);
 
-            let dev = std::rc::Rc::new(qcow2_setup_dev_uring(&path, &params).await.unwrap());
+            let dev = std::rc::Rc::new(qcow2_setup_dev_tokio(&path, &params).await.unwrap());
             // we are top device, can't be backing file
             assert!(!dev.info.is_back_file());
             dev.check().await.unwrap();
@@ -290,7 +298,8 @@ mod integretion {
 
     #[test]
     fn test_qcow2_dev_backing_read() {
-        tokio_uring::start(async move {
+        let rt = Runtime::new().unwrap();
+        rt.block_on(async move {
             let size = 4_u64 << 20;
             let cluster_bits = 16;
             let (rawf, qcow2f) = make_compressed_qcow2_img(size, cluster_bits);
@@ -310,8 +319,8 @@ mod integretion {
         cluster_bits: usize,
     ) {
         let path = PathBuf::from(qcow2_img.path());
-        let params = qcow2_default_params!(false, true);
-        let dev = qcow2_setup_dev_uring(&path, &params).await.unwrap();
+        let params = qcow2_default_params!(false, false);
+        let dev = qcow2_setup_dev_tokio(&path, &params).await.unwrap();
 
         // we are top device, can't be backing file
         assert!(!dev.info.is_back_file());
@@ -357,7 +366,8 @@ mod integretion {
 
     #[test]
     fn test_qcow2_dev_backing_write() {
-        tokio_uring::start(async move {
+        let rt = Runtime::new().unwrap();
+        rt.block_on(async move {
             let size = 16_u64 << 20;
             let cluster_bits = 16;
             let (rawf, qcow2f) = make_compressed_qcow2_img(size, cluster_bits);
@@ -369,22 +379,23 @@ mod integretion {
 
     #[test]
     fn test_qcow2_dev_allocater_small() {
-        tokio_uring::start(async move {
+        let rt = Runtime::new().unwrap();
+        rt.block_on(async move {
             let to_alloc = 180;
             let size = 64_u64 << 20;
             let cluster_bits = 16;
             let img_file = make_temp_qcow2_img(size, cluster_bits, 4);
             let path = PathBuf::from(img_file.path());
-            let params = qcow2_default_params!(false, true);
+            let params = qcow2_default_params!(false, false);
 
-            let dev = qcow2_setup_dev_uring(&path, &params).await.unwrap();
+            let dev = qcow2_setup_dev_tokio(&path, &params).await.unwrap();
             let allocated = dev.count_alloc_clusters().await.unwrap();
             assert!(allocated >= 3);
 
             let res = dev.allocate_clusters(to_alloc).await.unwrap().unwrap();
             dev.flush_meta().await.unwrap();
 
-            let dev2 = qcow2_setup_dev_uring(&path, &params).await.unwrap();
+            let dev2 = qcow2_setup_dev_tokio(&path, &params).await.unwrap();
             let curr = dev2.count_alloc_clusters().await.unwrap();
 
             // count and see if anything is expected
@@ -394,7 +405,7 @@ mod integretion {
             dev.free_clusters(res.0, res.1).await.unwrap();
             dev.flush_meta().await.unwrap();
 
-            let dev3 = qcow2_setup_dev_uring(&path, &params).await.unwrap();
+            let dev3 = qcow2_setup_dev_tokio(&path, &params).await.unwrap();
             let curr = dev3.count_alloc_clusters().await.unwrap();
 
             //check if the last free is done successfully
@@ -404,14 +415,15 @@ mod integretion {
 
     #[test]
     fn test_qcow2_dev_allocater_big() {
-        tokio_uring::start(async move {
+        let rt = Runtime::new().unwrap();
+        rt.block_on(async move {
             let size = 256_u64 << 20;
             let cluster_bits = 16;
             let img_file = make_temp_qcow2_img(size, cluster_bits, 4);
             let path = PathBuf::from(img_file.path());
-            let params = qcow2_default_params!(false, true);
+            let params = qcow2_default_params!(false, false);
 
-            let dev = qcow2_setup_dev_uring(&path, &params).await.unwrap();
+            let dev = qcow2_setup_dev_tokio(&path, &params).await.unwrap();
             let allocated = dev.count_alloc_clusters().await.unwrap();
             assert!(allocated >= 3);
 
@@ -420,7 +432,7 @@ mod integretion {
             let res = dev.allocate_clusters(to_alloc).await.unwrap().unwrap();
             dev.flush_meta().await.unwrap();
 
-            let dev2 = qcow2_setup_dev_uring(&path, &params).await.unwrap();
+            let dev2 = qcow2_setup_dev_tokio(&path, &params).await.unwrap();
             let curr = dev2.count_alloc_clusters().await.unwrap();
 
             /*
@@ -439,7 +451,7 @@ mod integretion {
                 dev.flush_meta().await.unwrap();
             }
 
-            let dev3 = qcow2_setup_dev_uring(&path, &params).await.unwrap();
+            let dev3 = qcow2_setup_dev_tokio(&path, &params).await.unwrap();
             let curr = dev3.count_alloc_clusters().await.unwrap();
 
             //check if the last free is done successfully
@@ -449,14 +461,15 @@ mod integretion {
 
     #[test]
     fn test_qcow2_dev_allocater_single() {
-        tokio_uring::start(async move {
+        let rt = Runtime::new().unwrap();
+        rt.block_on(async move {
             let size = 256_u64 << 20;
             let cluster_bits = 16;
             let img_file = make_temp_qcow2_img(size, cluster_bits, 4);
             let path = PathBuf::from(img_file.path());
-            let params = qcow2_default_params!(false, true);
+            let params = qcow2_default_params!(false, false);
 
-            let dev = qcow2_setup_dev_uring(&path, &params).await.unwrap();
+            let dev = qcow2_setup_dev_tokio(&path, &params).await.unwrap();
             let allocated = dev.count_alloc_clusters().await.unwrap();
             assert!(allocated >= 3);
 
@@ -470,7 +483,7 @@ mod integretion {
                 dev.flush_meta().await.unwrap();
             }
 
-            let dev2 = qcow2_setup_dev_uring(&path, &params).await.unwrap();
+            let dev2 = qcow2_setup_dev_tokio(&path, &params).await.unwrap();
             let curr = dev2.count_alloc_clusters().await.unwrap();
 
             // 1 extra cluster is for refblock
@@ -480,12 +493,13 @@ mod integretion {
 
     #[test]
     fn test_qcow2_dev_write_partial_cluster() {
-        tokio_uring::start(async move {
+        let rt = Runtime::new().unwrap();
+        rt.block_on(async move {
             let size = 128_u64 << 20;
             let cluster_bits = 16;
             let img_file = make_temp_qcow2_img(size, cluster_bits, 4);
             let path = PathBuf::from(img_file.path());
-            let params = qcow2_default_params!(false, true);
+            let params = qcow2_default_params!(false, false);
             let mut buf = page_aligned_vec!(u8, size as usize);
             let mut buf2 = page_aligned_vec!(u8, size as usize);
             let bsize = size as usize;
@@ -501,7 +515,7 @@ mod integretion {
                 buf[i] = 0;
             }
 
-            let dev = qcow2_setup_dev_uring(&path, &params).await.unwrap();
+            let dev = qcow2_setup_dev_tokio(&path, &params).await.unwrap();
             //the last 8k should be read as zero
             dev.write_at(&buf[..(bsize - boff)], 0).await.unwrap();
             if dev.need_flush_meta() {
@@ -509,7 +523,7 @@ mod integretion {
             }
             dev.check().await.unwrap();
 
-            let dev2 = qcow2_setup_dev_uring(&path, &params).await.unwrap();
+            let dev2 = qcow2_setup_dev_tokio(&path, &params).await.unwrap();
             dev2.read_at(&mut buf2[..], 0).await.unwrap();
 
             let raw_sum = hex_digest(Algorithm::MD5, &buf);
@@ -533,12 +547,13 @@ mod integretion {
 
     #[test]
     fn test_qcow2_dev_concurrent_writes() {
-        tokio_uring::start(async move {
+        let rt = Runtime::new().unwrap();
+        rt.block_on(async move {
             let size = 256_u64 << 20;
             let cluster_bits = 16;
             let img_file = make_temp_qcow2_img(size, cluster_bits, 4);
             let path = PathBuf::from(img_file.path());
-            let params = qcow2_default_params!(false, true);
+            let params = qcow2_default_params!(false, false);
             let bsize = 512_u64 << 10;
 
             // build data source from /dev/random
@@ -549,7 +564,7 @@ mod integretion {
             file.read(&mut buf).unwrap();
             let raw_sum = hex_digest(Algorithm::MD5, &buf);
 
-            let dev = qcow2_setup_dev_uring(&path, &params).await.unwrap();
+            let dev = qcow2_setup_dev_tokio(&path, &params).await.unwrap();
             let mut f_vec = Vec::new();
 
             let start = Instant::now();
@@ -605,12 +620,13 @@ mod integretion {
 
     #[test]
     fn test_qcow2_dev_concurrent_rw() {
-        tokio_uring::start(async move {
+        let rt = Runtime::new().unwrap();
+        rt.block_on(async move {
             let size = 128_u64 << 20;
             let cluster_bits = 16;
             let img_file = make_temp_qcow2_img(size, cluster_bits, 4);
             let path = PathBuf::from(img_file.path());
-            let params = qcow2_default_params!(false, true);
+            let params = qcow2_default_params!(false, false);
 
             // build data source from /dev/random
             let mut buf = page_aligned_vec!(u8, size as usize);
@@ -619,7 +635,7 @@ mod integretion {
             let mut file = std::fs::File::open(raw_path).unwrap();
             file.read(&mut buf).unwrap();
 
-            let dev = qcow2_setup_dev_uring(&path, &params).await.unwrap();
+            let dev = qcow2_setup_dev_tokio(&path, &params).await.unwrap();
 
             let write = dev.write_at(&buf, 0);
             let mut rbuf = page_aligned_vec!(u8, size as usize);
@@ -643,10 +659,11 @@ mod integretion {
     ) {
         let dev = dev_rc.clone();
         let mut fv = Vec::new();
+        let local = tokio::task::LocalSet::new();
 
         for (off, len) in input {
             let d = dev.clone();
-            fv.push(tokio_uring::spawn(async move {
+            fv.push(local.spawn_local(async move {
                 let mut wbuf = page_aligned_vec!(u8, len as usize);
 
                 let mut rng = rand::thread_rng();
@@ -665,6 +682,7 @@ mod integretion {
                 assert!(w_sum == r_sum);
             }));
         }
+        local.await;
         futures::future::join_all(fv).await;
 
         if dev.need_flush_meta() {
@@ -674,14 +692,15 @@ mod integretion {
     }
     #[test]
     fn test_qcow2_dev_partial_writes_on_cluster() {
-        tokio_uring::start(async move {
+        let rt = Runtime::new().unwrap();
+        rt.block_on(async move {
             let size = 16_u64 << 20;
             let cluster_bits = 16;
             let img_file = make_temp_qcow2_img(size, cluster_bits, 4);
             let path = PathBuf::from(img_file.path());
-            let params = qcow2_default_params!(false, true);
+            let params = qcow2_default_params!(false, false);
 
-            let dev = std::rc::Rc::new(qcow2_setup_dev_uring(&path, &params).await.unwrap());
+            let dev = std::rc::Rc::new(qcow2_setup_dev_tokio(&path, &params).await.unwrap());
             let input = vec![(0x108000, 8192), (0x10b000, 4096)];
             test_qcow2_dev_write_verify(&dev, input).await;
         });
@@ -689,15 +708,16 @@ mod integretion {
 
     #[test]
     fn test_qcow2_dev_partial_writes_on_cluster_backing() {
-        tokio_uring::start(async move {
+        let rt = Runtime::new().unwrap();
+        rt.block_on(async move {
             let size = 16_u64 << 20;
             let cluster_bits = 16;
             let (_, qcow2f) = make_compressed_qcow2_img(size, cluster_bits);
             let qcow2_img = make_backing_qcow2_img(&qcow2f);
             let path = PathBuf::from(qcow2_img.path());
-            let params = qcow2_default_params!(false, true);
+            let params = qcow2_default_params!(false, false);
 
-            let dev = std::rc::Rc::new(qcow2_setup_dev_uring(&path, &params).await.unwrap());
+            let dev = std::rc::Rc::new(qcow2_setup_dev_tokio(&path, &params).await.unwrap());
             // we are top device, can't be backing file
             assert!(!dev.info.is_back_file());
 
@@ -708,23 +728,25 @@ mod integretion {
 
     #[test]
     fn test_qcow2_dev_random_rw() {
-        tokio_uring::start(async move {
+        let rt = Runtime::new().unwrap();
+        rt.block_on(async move {
             let size = 256_u64 << 20;
             let cluster_bits = 16;
             let img_file = make_temp_qcow2_img(size, cluster_bits, 4);
             let path = PathBuf::from(img_file.path());
-            let params = qcow2_default_params!(false, true);
-            let dev = std::rc::Rc::new(qcow2_setup_dev_uring(&path, &params).await.unwrap());
+            let params = qcow2_default_params!(false, false);
+            let dev = std::sync::Arc::new(qcow2_setup_dev_tokio(&path, &params).await.unwrap());
             let mut fv = Vec::new();
             let blocks = size >> params.get_bs_bits();
             let bs = 1 << params.get_bs_bits();
             let min_bs = 1;
             let max_bs = 1024;
             let io_jobs = 32;
+            let local = tokio::task::LocalSet::new();
 
             for _ in 0..io_jobs {
                 let d = dev.clone();
-                fv.push(tokio_uring::spawn(async move {
+                fv.push(local.spawn_local(async move {
                     let mut rng = rand::thread_rng();
 
                     let off = rng.gen_range(0..blocks) * bs;
@@ -739,7 +761,7 @@ mod integretion {
 
             for _ in 0..io_jobs {
                 let d = dev.clone();
-                fv.push(tokio_uring::spawn(async move {
+                fv.push(local.spawn_local(async move {
                     let mut rng = rand::thread_rng();
 
                     let off = rng.gen_range(0..blocks) * bs;
@@ -750,6 +772,7 @@ mod integretion {
                     d.read_at(&mut rbuf, off).await.unwrap();
                 }));
             }
+            local.await;
             futures::future::join_all(fv).await;
 
             if dev.need_flush_meta() {
@@ -762,7 +785,8 @@ mod integretion {
 
     #[test]
     fn test_qcow2_dev_resized_backing_rw() {
-        tokio_uring::start(async move {
+        let rt = Runtime::new().unwrap();
+        rt.block_on(async move {
             let size = 16_u64 << 20;
             let cluster_bits = 16;
             let (_, qcow2f) = make_compressed_qcow2_img(size, cluster_bits);
@@ -786,8 +810,8 @@ mod integretion {
             let wbuf_md5 = hex_digest(Algorithm::MD5, &wbuf);
 
             let path = PathBuf::from(qcow2_img.path());
-            let params = qcow2_default_params!(false, true);
-            let dev = qcow2_setup_dev_uring(&path, &params).await.unwrap();
+            let params = qcow2_default_params!(false, false);
+            let dev = qcow2_setup_dev_tokio(&path, &params).await.unwrap();
 
             dev.write_at(&wbuf, off as u64).await.unwrap();
             let mut rbuf = page_aligned_vec!(u8, buf_len);
@@ -803,13 +827,14 @@ mod integretion {
 
     #[test]
     fn test_qcow2_dev_shrink_cache() {
-        tokio_uring::start(async move {
+        let rt = Runtime::new().unwrap();
+        rt.block_on(async move {
             let size = 8_u64 << 20;
             let cluster_bits = 16;
             let img_file = make_temp_qcow2_img(size, cluster_bits, 4);
             let path = PathBuf::from(img_file.path());
-            let params = qcow2_default_params!(false, true);
-            let dev = std::rc::Rc::new(qcow2_setup_dev_uring(&path, &params).await.unwrap());
+            let params = qcow2_default_params!(false, false);
+            let dev = std::rc::Rc::new(qcow2_setup_dev_tokio(&path, &params).await.unwrap());
 
             let input = vec![(0x0, 8192)];
             test_qcow2_dev_write_verify(&dev, input).await;

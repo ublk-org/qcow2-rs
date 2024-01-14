@@ -35,10 +35,11 @@ host cluster leak, format qcow2 image, ....
 
 ```Rust
 
-    tokio_uring::start(async move {
-        let params = qcow2_rs::dev::Qcow2DevParams::new(9, None, None, false, true);
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async move {
+        let params = qcow2_rs::dev::Qcow2DevParams::new(9, None, None, false, false);
         let path = std::path::PathBuf::from("test.qcow2");
-        let dev = qcow2_rs::utils::qcow2_setup_dev_uring(&path, &params)
+        let dev = qcow2_rs::utils::qcow2_setup_dev_tokio(&path, &params)
             .await
             .unwrap();
 
