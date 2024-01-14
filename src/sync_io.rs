@@ -88,14 +88,14 @@ impl Qcow2IoOps for Qcow2IoSync {
         }
     }
 
-    async fn fallocate(&self, offset: u64, len: usize, _flags: u32) -> Qcow2Result<()> {
-        let res = fallocate(
-            self.fd,
-            FallocateFlags::FALLOC_FL_PUNCH_HOLE | FallocateFlags::FALLOC_FL_KEEP_SIZE,
-            offset as i64,
-            len as i64,
-        )?;
+    async fn fallocate(&self, offset: u64, len: usize, flags: u32) -> Qcow2Result<()> {
+        let f = if (flags & Qcow2OpsFlags::FALLOCATE_ZERO_RAGE) != 0 {
+            FallocateFlags::FALLOC_FL_PUNCH_HOLE | FallocateFlags::FALLOC_FL_ZERO_RANGE
+        } else {
+            FallocateFlags::FALLOC_FL_PUNCH_HOLE
+        };
 
+        let res = fallocate(self.fd, f, offset as i64, len as i64)?;
         Ok(res)
     }
 

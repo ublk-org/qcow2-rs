@@ -57,7 +57,7 @@ impl Qcow2IoOps for Qcow2IoUring {
         }
     }
 
-    async fn fallocate(&self, offset: u64, len: usize, _flags: u32) -> Qcow2Result<()> {
+    async fn fallocate(&self, offset: u64, len: usize, flags: u32) -> Qcow2Result<()> {
         // tokio-uring github fallocate
         /*
         let res = self
@@ -71,12 +71,12 @@ impl Qcow2IoOps for Qcow2IoUring {
 
         // the latest tokio-uring crate(0.4) doesn't support fallocate yet, so use
         // sync nix fallocate() syscall
-        let res = fallocate(
-            self.file.as_raw_fd(),
-            FallocateFlags::FALLOC_FL_PUNCH_HOLE | FallocateFlags::FALLOC_FL_ZERO_RANGE,
-            offset as i64,
-            len as i64,
-        )?;
+        let f = if (flags & Qcow2OpsFlags::FALLOCATE_ZERO_RAGE) != 0 {
+            FallocateFlags::FALLOC_FL_PUNCH_HOLE | FallocateFlags::FALLOC_FL_ZERO_RANGE
+        } else {
+            FallocateFlags::FALLOC_FL_PUNCH_HOLE
+        };
+        let res = fallocate(self.file.as_raw_fd(), f, offset as i64, len as i64)?;
 
         Ok(res)
     }

@@ -2,6 +2,12 @@ use crate::error::Qcow2Result;
 #[rustversion::before(1.75)]
 use async_trait::async_trait;
 
+pub struct Qcow2OpsFlags {}
+
+impl Qcow2OpsFlags {
+    pub const FALLOCATE_ZERO_RAGE: u32 = 1_u32 << 0;
+}
+
 /// How read/write/discard are implemented, so that qcow2-rs can be
 /// used with multiple io engine.
 ///

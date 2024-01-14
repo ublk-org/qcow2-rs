@@ -695,7 +695,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
                                             f_vec.push(self.call_fallocate(
                                                 cache_off & !((1 << info.cluster_bits()) - 1),
                                                 1 << info.cluster_bits(),
-                                                0,
+                                                Qcow2OpsFlags::FALLOCATE_ZERO_RAGE,
                                             ));
                                             cluster_map.insert(key, locked_cls);
                                         }
@@ -956,7 +956,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
             (refblock_offset - cls.rb_slice_host_start(info))
                 .try_into()
                 .unwrap(),
-            0,
+            Qcow2OpsFlags::FALLOCATE_ZERO_RAGE,
         );
         let rb = self.flush_table(&new_refblock, 0, new_refblock.byte_size());
         let rb_after = self.call_fallocate(
@@ -964,7 +964,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
             (cls.rb_slice_host_end(info) as usize - refblock_offset as usize - rb_size)
                 .try_into()
                 .unwrap(),
-            0,
+            Qcow2OpsFlags::FALLOCATE_ZERO_RAGE,
         );
         let (res0, res1, res2) = futures::join!(rb_before, rb, rb_after);
         if res0.is_err() || res1.is_err() || res2.is_err() {
