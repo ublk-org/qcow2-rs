@@ -2781,8 +2781,9 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
 #[cfg(test)]
 mod tests {
     use crate::dev::*;
-    use crate::qcow2_default_params;
+    use crate::tokio_io::Qcow2IoTokio;
     use crate::utils::qcow2_setup_dev_tokio;
+    use crate::{page_aligned_vec, qcow2_default_params};
     use std::path::PathBuf;
     use tokio::runtime::Runtime;
     use utilities::*;
@@ -2898,6 +2899,112 @@ mod tests {
 
             // 1 extra cluster is for refblock
             assert!(allocated + to_alloc + 1 == curr);
+        });
+    }
+
+    #[test]
+    fn test_qcow2_dev_io() {
+        let rt = Runtime::new().unwrap();
+        rt.block_on(async move {
+            let size = 64_u64 << 20;
+            let img_file = make_temp_qcow2_img(size, 16, 4);
+            let io = Qcow2IoTokio::new(&img_file.path().to_path_buf(), true, false).await;
+            let mut buf = page_aligned_vec!(u8, 4096);
+            let _ = io.read_to(0, &mut buf).await;
+            let header = Qcow2Header::from_buf(&buf).unwrap();
+
+            assert!(header.size() == size);
+            assert!(header.cluster_bits() == 16);
+        });
+    }
+
+    #[test]
+    fn test_qcow2_dev_read_null() {
+        let rt = Runtime::new().unwrap();
+        rt.block_on(async move {
+            let size = 64_u64 << 20;
+            let cluster_bits = 16;
+            let img_file = make_temp_qcow2_img(size, cluster_bits, 4);
+            let path = PathBuf::from(img_file.path());
+            let params = qcow2_default_params!(true, false);
+            let dev = qcow2_setup_dev_tokio(&path, &params).await.unwrap();
+
+            let mut buf = page_aligned_vec!(u8, 1 << cluster_bits);
+            dev.read_at(&mut buf, 0).await.unwrap();
+        });
+    }
+
+    #[test]
+    fn test_qcow2_dev_read_data() {
+        let rt = Runtime::new().unwrap();
+        rt.block_on(async move {
+            let size = 2_u64 << 20;
+            let cluster_bits = 16;
+            let (rawf, qcow2f) = make_rand_qcow2_img(size, cluster_bits);
+
+            let qcow2_sum = calculate_qcow2_data_md5(&qcow2f, 0, size).await;
+            let raw_sum = calculate_raw_md5(rawf.path().to_str().unwrap(), 0, size as usize);
+
+            //println!("{} vs. {}", raw_sum, qcow2_sum);
+            assert!(raw_sum == qcow2_sum);
+        });
+    }
+
+    #[test]
+    fn test_qcow2_dev_backing_read() {
+        let rt = Runtime::new().unwrap();
+        rt.block_on(async move {
+            let size = 4_u64 << 20;
+            let cluster_bits = 16;
+            let (rawf, qcow2f) = make_compressed_qcow2_img(size, cluster_bits);
+            let qcow2_img = make_backing_qcow2_img(&qcow2f);
+
+            let qcow2_sum = calculate_qcow2_data_md5(&qcow2_img, 0, size).await;
+            let raw_sum = calculate_raw_md5(rawf.path().to_str().unwrap(), 0, size as usize);
+
+            //println!("{} vs. {}", raw_sum, qcow2_sum);
+            assert!(raw_sum == qcow2_sum);
+        });
+    }
+
+    #[test]
+    fn test_qcow2_dev_read_compressed_data() {
+        let rt = Runtime::new().unwrap();
+        rt.block_on(async move {
+            let size = 4_u64 << 20;
+            let cluster_bits = 16;
+            let (rawf, qcow2f) = make_compressed_qcow2_img(size, cluster_bits);
+
+            let qcow2_sum = calculate_qcow2_data_md5(&qcow2f, 0, size).await;
+            let raw_sum = calculate_raw_md5(rawf.path().to_str().unwrap(), 0, size as usize);
+
+            //println!("{} vs. {}", raw_sum, qcow2_sum);
+            assert!(raw_sum == qcow2_sum);
+        });
+    }
+
+    #[test]
+    fn test_qcow2_dev_write_compressed_data() {
+        let rt = Runtime::new().unwrap();
+        rt.block_on(async move {
+            let size = 4_u64 << 20;
+            let cluster_bits = 16;
+            let (rawf, qcow2f) = make_compressed_qcow2_img(size, cluster_bits);
+
+            test_cow_write(&rawf, &qcow2f, cluster_bits).await;
+        });
+    }
+
+    #[test]
+    fn test_qcow2_dev_backing_write() {
+        let rt = Runtime::new().unwrap();
+        rt.block_on(async move {
+            let size = 16_u64 << 20;
+            let cluster_bits = 16;
+            let (rawf, qcow2f) = make_compressed_qcow2_img(size, cluster_bits);
+            let qcow2_img = make_backing_qcow2_img(&qcow2f);
+
+            test_cow_write(&rawf, &qcow2_img, cluster_bits).await;
         });
     }
 }
