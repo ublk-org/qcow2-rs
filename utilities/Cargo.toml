@@ -1,0 +1,13 @@
+[package]
+name = "utilities"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+tempfile = "3.6.0"
+crypto-hash = "0.3"
+shlex = "1.2.0"
+rand = "0.8"
+qcow2-rs = { path = "../" }
