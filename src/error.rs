@@ -19,6 +19,7 @@ impl Clone for Qcow2Error {
     }
 }
 
+#[cfg(not(target_os = "windows"))]
 impl From<nix::errno::Errno> for Qcow2Error {
     fn from(err: nix::errno::Errno) -> Self {
         let description = err.to_string();

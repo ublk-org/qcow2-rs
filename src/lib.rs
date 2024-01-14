@@ -4,6 +4,7 @@ pub mod error;
 pub mod helpers;
 pub mod meta;
 pub mod ops;
+#[cfg(not(target_os = "windows"))]
 pub mod sync_io;
 pub mod tokio_io;
 pub mod uring;

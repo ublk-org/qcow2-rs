@@ -2,6 +2,7 @@ use crate::error::Qcow2Result;
 use crate::ops::*;
 #[rustversion::before(1.75)]
 use async_trait::async_trait;
+#[cfg(target_os = "linux")]
 use nix::fcntl::{fallocate, FallocateFlags};
 use std::cell::RefCell;
 use std::fs::{File, OpenOptions};
@@ -34,11 +35,9 @@ impl Qcow2IoSync {
             fd,
         }
     }
-}
 
-#[rustversion::attr(before(1.75), async_trait(?Send))]
-impl Qcow2IoOps for Qcow2IoSync {
-    async fn read_to(&self, offset: u64, buf: &mut [u8]) -> Qcow2Result<usize> {
+    #[inline(always)]
+    async fn read_at(&self, offset: u64, buf: &mut [u8]) -> Qcow2Result<usize> {
         let res = unsafe {
             libc::pread(
                 self.fd,
@@ -63,7 +62,8 @@ impl Qcow2IoOps for Qcow2IoSync {
         }
     }
 
-    async fn write_from(&self, offset: u64, buf: &[u8]) -> Qcow2Result<()> {
+    #[inline(always)]
+    async fn write_at(&self, offset: u64, buf: &[u8]) -> Qcow2Result<()> {
         let res = unsafe {
             libc::pwrite(
                 self.fd,
@@ -87,7 +87,19 @@ impl Qcow2IoOps for Qcow2IoSync {
             return Ok(());
         }
     }
+}
 
+#[rustversion::attr(before(1.75), async_trait(?Send))]
+impl Qcow2IoOps for Qcow2IoSync {
+    async fn read_to(&self, offset: u64, buf: &mut [u8]) -> Qcow2Result<usize> {
+        self.read_at(offset, buf).await
+    }
+
+    async fn write_from(&self, offset: u64, buf: &[u8]) -> Qcow2Result<()> {
+        self.write_at(offset, buf).await
+    }
+
+    #[cfg(target_os = "linux")]
     async fn fallocate(&self, offset: u64, len: usize, flags: u32) -> Qcow2Result<()> {
         let f = if (flags & Qcow2OpsFlags::FALLOCATE_ZERO_RAGE) != 0 {
             FallocateFlags::FALLOC_FL_PUNCH_HOLE | FallocateFlags::FALLOC_FL_ZERO_RANGE
@@ -98,9 +110,23 @@ impl Qcow2IoOps for Qcow2IoSync {
         let res = fallocate(self.fd, f, offset as i64, len as i64)?;
         Ok(res)
     }
+    #[cfg(not(target_os = "linux"))]
+    async fn fallocate(&self, offset: u64, len: usize, _flags: u32) -> Qcow2Result<()> {
+        let mut data = crate::page_aligned_vec!(u8, len);
+        crate::zero_buf!(data);
 
+        self.write_at(offset, &data).await
+    }
+
+    #[cfg(not(target_os = "windows"))]
     async fn fsync(&self, _offset: u64, _len: usize, _flags: u32) -> Qcow2Result<()> {
         let res = nix::unistd::fsync(self.fd)?;
+
+        Ok(res)
+    }
+    #[cfg(target_os = "windows")]
+    async fn fsync(&self, _offset: u64, _len: usize, _flags: u32) -> Qcow2Result<()> {
+        let res = unsafe { libc::fsync(self.fd) };
 
         Ok(res)
     }

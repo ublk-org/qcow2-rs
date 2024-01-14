@@ -1,5 +1,6 @@
 extern crate utilities;
 
+#[cfg(not(target_os = "windows"))]
 #[cfg(test)]
 mod sync_io_integretion {
     use crypto_hash::{hex_digest, Algorithm};

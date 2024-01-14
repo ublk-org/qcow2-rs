@@ -1,19 +1,29 @@
 // This crate belongs to binary utility of `qcow2`
 use crate::error::Qcow2Result;
 use crate::ops::*;
+#[cfg(target_os = "linux")]
 use nix::fcntl::{fallocate, FallocateFlags};
+#[cfg(target_os = "linux")]
 use std::os::fd::AsRawFd;
 use std::path::PathBuf;
 use tokio::fs::{File, OpenOptions};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, SeekFrom};
 
+#[cfg(target_os = "linux")]
 #[derive(Debug)]
 pub struct Qcow2IoTokio {
     file: tokio::sync::Mutex<File>,
     fd: i32,
 }
 
+#[cfg(not(target_os = "linux"))]
+#[derive(Debug)]
+pub struct Qcow2IoTokio {
+    file: tokio::sync::Mutex<File>,
+}
+
 impl Qcow2IoTokio {
+    #[cfg(target_os = "linux")]
     pub async fn new(path: &PathBuf, ro: bool, dio: bool) -> Qcow2IoTokio {
         let file = OpenOptions::new()
             .read(true)
@@ -30,6 +40,31 @@ impl Qcow2IoTokio {
             fd,
         }
     }
+
+    #[cfg(not(target_os = "linux"))]
+    pub async fn new(path: &PathBuf, ro: bool, dio: bool) -> Qcow2IoTokio {
+        let file = OpenOptions::new()
+            .read(true)
+            .write(!ro)
+            .open(path.clone())
+            .await
+            .unwrap();
+
+        assert!(!dio);
+
+        Qcow2IoTokio {
+            file: tokio::sync::Mutex::new(file),
+        }
+    }
+
+    async fn write_at(&self, offset: u64, buf: &[u8]) -> Qcow2Result<()> {
+        let mut file = self.file.lock().await;
+
+        file.seek(SeekFrom::Start(offset)).await?;
+        file.write(buf).await?;
+
+        Ok(())
+    }
 }
 
 #[rustversion::attr(before(1.75), async_trait(?Send))]
@@ -44,14 +79,10 @@ impl Qcow2IoOps for Qcow2IoTokio {
     }
 
     async fn write_from(&self, offset: u64, buf: &[u8]) -> Qcow2Result<()> {
-        let mut file = self.file.lock().await;
-
-        file.seek(SeekFrom::Start(offset)).await?;
-        file.write(buf).await?;
-
-        Ok(())
+        self.write_at(offset, buf).await
     }
 
+    #[cfg(target_os = "linux")]
     async fn fallocate(&self, offset: u64, len: usize, flags: u32) -> Qcow2Result<()> {
         let f = if (flags & Qcow2OpsFlags::FALLOCATE_ZERO_RAGE) != 0 {
             FallocateFlags::FALLOC_FL_PUNCH_HOLE | FallocateFlags::FALLOC_FL_ZERO_RANGE
@@ -61,6 +92,13 @@ impl Qcow2IoOps for Qcow2IoTokio {
 
         let res = fallocate(self.fd, f, offset as i64, len as i64)?;
         Ok(res)
+    }
+    #[cfg(not(target_os = "linux"))]
+    async fn fallocate(&self, offset: u64, len: usize, _flags: u32) -> Qcow2Result<()> {
+        let mut data = crate::page_aligned_vec!(u8, len);
+        crate::zero_buf!(data);
+
+        self.write_at(offset, &data).await
     }
 
     async fn fsync(&self, _offset: u64, _len: usize, _flags: u32) -> Qcow2Result<()> {

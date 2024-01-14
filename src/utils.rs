@@ -3,6 +3,7 @@ use crate::error::Qcow2Result;
 use crate::meta::Qcow2Header;
 use crate::ops::*;
 use crate::page_aligned_vec;
+#[cfg(not(target_os = "windows"))]
 use crate::sync_io::Qcow2IoSync;
 use crate::uring::Qcow2IoUring;
 use async_recursion::async_recursion;
@@ -112,4 +113,5 @@ macro_rules! qcow2_setup_dev_fn_sync {
     };
 }
 
+#[cfg(not(target_os = "windows"))]
 qcow2_setup_dev_fn_sync!(Qcow2IoSync, qcow2_setup_dev_sync);
