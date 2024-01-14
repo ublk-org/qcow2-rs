@@ -7,5 +7,6 @@ pub mod ops;
 #[cfg(not(target_os = "windows"))]
 pub mod sync_io;
 pub mod tokio_io;
+#[cfg(target_os = "linux")]
 pub mod uring;
 pub mod utils;

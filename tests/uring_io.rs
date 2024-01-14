@@ -1,5 +1,6 @@
 extern crate utilities;
 
+#[cfg(target_os = "linux")]
 #[cfg(test)]
 mod uring_integretion {
     use qcow2_rs::dev::*;

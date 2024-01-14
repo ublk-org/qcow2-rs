@@ -5,6 +5,7 @@ use crate::ops::*;
 use crate::page_aligned_vec;
 #[cfg(not(target_os = "windows"))]
 use crate::sync_io::Qcow2IoSync;
+#[cfg(target_os = "linux")]
 use crate::uring::Qcow2IoUring;
 use async_recursion::async_recursion;
 use std::path::PathBuf;
@@ -89,6 +90,7 @@ macro_rules! qcow2_setup_dev_fn {
     };
 }
 
+#[cfg(target_os = "linux")]
 qcow2_setup_dev_fn!(Qcow2IoUring, qcow2_setup_dev_uring);
 qcow2_setup_dev_fn!(crate::tokio_io::Qcow2IoTokio, qcow2_setup_dev_tokio);
 
