@@ -1,5 +1,5 @@
-use crate::dev::Qcow2IoOps;
 use crate::error::Qcow2Result;
+use crate::ops::*;
 #[rustversion::before(1.75)]
 use async_trait::async_trait;
 use nix::fcntl::{fallocate, FallocateFlags};

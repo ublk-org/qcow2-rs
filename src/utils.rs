@@ -1,6 +1,7 @@
-use crate::dev::{Qcow2Dev, Qcow2DevParams, Qcow2IoOps};
+use crate::dev::{Qcow2Dev, Qcow2DevParams};
 use crate::error::Qcow2Result;
 use crate::meta::Qcow2Header;
+use crate::ops::*;
 use crate::page_aligned_vec;
 use crate::sync_io::Qcow2IoSync;
 use crate::uring::Qcow2IoUring;

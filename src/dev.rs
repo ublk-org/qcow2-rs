@@ -6,10 +6,9 @@ use crate::meta::{
     L1Entry, L1Table, L2Entry, L2Table, Mapping, MappingSource, Qcow2Header, RefBlock, RefTable,
     RefTableEntry, SplitGuestOffset, Table, TableEntry,
 };
+use crate::ops::*;
 use crate::zero_buf;
 use async_recursion::async_recursion;
-#[rustversion::before(1.75)]
-use async_trait::async_trait;
 use futures_locks::{RwLock as AsyncRwLock, RwLockWriteGuard as LockWriteGuard};
 use miniz_oxide::inflate::core::{decompress as inflate, DecompressorOxide};
 use miniz_oxide::inflate::TINFLStatus;
@@ -19,20 +18,6 @@ use std::mem::size_of;
 use std::ops::RangeInclusive;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-
-/// How read/write/discard are implemented, so that qcow2-rs can be
-/// used with multiple io engine.
-///
-/// these methods are called for reading data from image, writing data
-/// to image, and discarding range.
-#[rustversion::attr(before(1.75), async_trait(?Send))]
-#[rustversion::attr(since(1.75), allow(async_fn_in_trait))]
-pub trait Qcow2IoOps {
-    async fn read_to(&self, offset: u64, buf: &mut [u8]) -> Qcow2Result<usize>;
-    async fn write_from(&self, offset: u64, buf: &[u8]) -> Qcow2Result<()>;
-    async fn discard_range(&self, offset: u64, len: usize, flags: i32) -> Qcow2Result<()>;
-    async fn fsync(&self, offset: u64, len: usize, flags: i32) -> Qcow2Result<()>;
-}
 
 /// all readable Qcow2 info, make it into single cache line
 #[derive(Debug)]

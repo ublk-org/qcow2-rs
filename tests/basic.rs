@@ -3,6 +3,7 @@ mod integretion {
     use crypto_hash::{hex_digest, Algorithm};
     use qcow2_rs::dev::*;
     use qcow2_rs::meta::*;
+    use qcow2_rs::ops::*;
     use qcow2_rs::uring::*;
     use qcow2_rs::utils::*;
     use qcow2_rs::{page_aligned_vec, qcow2_default_params};
