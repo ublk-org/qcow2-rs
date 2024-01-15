@@ -12,7 +12,8 @@ use std::rc::Rc;
 
 pub fn run_shell_cmd(p: &str) {
     //println!("Run shell command {}", p);
-    let tokens = shlex::split(p).unwrap();
+    let pp = p.to_string();
+    let tokens: Vec<&str> = pp.split(' ').collect();
     let output = Command::new(&tokens[0])
         .args(&tokens[1..])
         .output()
