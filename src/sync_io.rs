@@ -17,6 +17,16 @@ pub struct Qcow2IoSync {
 
 impl Qcow2IoSync {
     pub fn new(path: &PathBuf, ro: bool, dio: bool) -> Qcow2IoSync {
+        #[cfg(target_os = "macos")]
+        fn set_dio(_file: &File) {}
+
+        #[cfg(not(target_os = "macos"))]
+        fn set_dio(file: &File) {
+            unsafe {
+                libc::fcntl(file.as_raw_fd(), libc::F_SETFL, libc::O_DIRECT);
+            }
+        }
+
         let file = OpenOptions::new()
             .read(true)
             .write(!ro)
@@ -24,9 +34,7 @@ impl Qcow2IoSync {
             .unwrap();
 
         if dio {
-            unsafe {
-                libc::fcntl(file.as_raw_fd(), libc::F_SETFL, libc::O_DIRECT);
-            }
+            set_dio(&file);
         }
 
         let fd = file.as_raw_fd();
