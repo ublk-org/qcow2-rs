@@ -8,7 +8,7 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
+  build_linux:
     name: Rust project - latest
     runs-on: ubuntu-latest
     strategy:
@@ -23,3 +23,32 @@ jobs:
       - run: cargo build --verbose
       - run: cargo test -- --nocapture
       - run: cargo test -r
+
+  build_win:
+    name: Rust project - latest
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        toolchain:
+          - stable
+    steps:
+     - name: Checkout repository
+       uses: actions/checkout@v4
+     - name: Install Chocolatey
+       run: |
+        $qemuZipPath = Join-Path $env:USERPROFILE 'qemu.zip'
+        Invoke-WebRequest -Uri 'https://cloudbase.it/downloads/qemu-img-win-x64-2_3_0.zip' -OutFile $qemuZipPath
+        Expand-Archive -Path $qemuZipPath -DestinationPath $env:USERPROFILE
+     - run: |
+        $env:PATH = "$env:USERPROFILE;$env:PATH"
+        qemu-img --help
+     - run: rustup update ${{ matrix.toolchain }} && rustup default ${{ matrix.toolchain }}
+     - run: cargo build --verbose
+     - name: Rust test(debug)
+       run: |
+        $env:PATH = "$env:USERPROFILE;$env:PATH"
+        cargo test -- --nocapture
+     - name: Rust test(release)
+       run: |
+        $env:PATH = "$env:USERPROFILE;$env:PATH"
+        cargo test -r
