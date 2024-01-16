@@ -4,6 +4,7 @@
 #![allow(dead_code)]
 use crate::error::Qcow2Result;
 use core::future::Future;
+use std::ops::{Deref, DerefMut};
 use std::pin::Pin;
 
 #[macro_export]
@@ -104,6 +105,94 @@ macro_rules! page_aligned_vec {
             a
         }
     }};
+}
+
+/// Slice like buffer, which address is aligned with 4096.
+///
+pub struct Qcow2IoBuf<T> {
+    ptr: *mut T,
+    size: usize,
+}
+
+impl<'a, T> Qcow2IoBuf<T> {
+    pub fn new(size: usize) -> Self {
+        let layout = std::alloc::Layout::from_size_align(size, 4096).unwrap();
+        let ptr = unsafe { std::alloc::alloc(layout) } as *mut T;
+
+        assert!(size != 0);
+
+        Qcow2IoBuf { ptr, size }
+    }
+
+    /// how many elements in this buffer
+    pub fn len(&self) -> usize {
+        let elem_size = core::mem::size_of::<T>();
+        self.size / elem_size
+    }
+
+    /// Return raw address of this buffer
+    pub fn as_ptr(&self) -> *const T {
+        self.ptr
+    }
+
+    /// Return mutable raw address of this buffer
+    pub fn as_mut_ptr(&self) -> *mut T {
+        self.ptr
+    }
+
+    /// slice with u8 element, only for RefBlock
+    pub(crate) fn as_u8_slice(&self) -> &[u8] {
+        unsafe { std::slice::from_raw_parts(self.ptr as *const u8, self.size) }
+    }
+
+    /// mutable slice with u8 element, only for RefBlock
+    pub(crate) fn as_u8_slice_mut(&mut self) -> &mut [u8] {
+        unsafe { std::slice::from_raw_parts_mut(self.ptr as *mut u8, self.size) }
+    }
+
+    /// fill zero for every bits of this buffer
+    pub fn zero_buf(&mut self) {
+        unsafe {
+            std::ptr::write_bytes(self.as_mut_ptr(), 0, self.len());
+        }
+    }
+}
+
+impl<T> std::fmt::Debug for Qcow2IoBuf<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "ptr {:?} size {} element type {}",
+            self.ptr,
+            self.size,
+            qcow2_type_of(unsafe { &*self.ptr })
+        )
+    }
+}
+
+/// Slice reference of this buffer
+impl<T> Deref for Qcow2IoBuf<T> {
+    type Target = [T];
+    fn deref(&self) -> &[T] {
+        let elem_size = core::mem::size_of::<T>();
+        unsafe { std::slice::from_raw_parts(self.ptr, self.size / elem_size) }
+    }
+}
+
+/// Mutable slice reference of this buffer
+impl<T> DerefMut for Qcow2IoBuf<T> {
+    fn deref_mut(&mut self) -> &mut [T] {
+        let elem_size = core::mem::size_of::<T>();
+        unsafe { std::slice::from_raw_parts_mut(self.ptr, self.size / elem_size) }
+    }
+}
+
+/// Free buffer with same alloc layout
+impl<T> Drop for Qcow2IoBuf<T> {
+    fn drop(&mut self) {
+        let layout = std::alloc::Layout::from_size_align(self.size, 4096).unwrap();
+        unsafe { std::alloc::dealloc(self.ptr as *mut u8, layout) };
+    }
 }
 
 /// It is user's responsibility to not free buffer of the slice
