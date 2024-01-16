@@ -114,6 +114,10 @@ pub struct Qcow2IoBuf<T> {
     size: usize,
 }
 
+// Users of Qcow2IoBuf has to deal with Send & Sync
+unsafe impl<T> Send for Qcow2IoBuf<T> {}
+unsafe impl<T> Sync for Qcow2IoBuf<T> {}
+
 impl<'a, T> Qcow2IoBuf<T> {
     pub fn new(size: usize) -> Self {
         let layout = std::alloc::Layout::from_size_align(size, 4096).unwrap();
