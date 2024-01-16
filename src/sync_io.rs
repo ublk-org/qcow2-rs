@@ -120,9 +120,9 @@ impl Qcow2IoOps for Qcow2IoSync {
     }
     #[cfg(not(target_os = "linux"))]
     async fn fallocate(&self, offset: u64, len: usize, _flags: u32) -> Qcow2Result<()> {
-        let mut data = crate::page_aligned_vec!(u8, len);
-        crate::zero_buf!(data);
+        let mut data = crate::helpers::Qcow2IoBuf::<u8>::new(len);
 
+        data.zero_buf();
         self.write_at(offset, &data).await
     }
 

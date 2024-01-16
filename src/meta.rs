@@ -420,7 +420,7 @@ impl Qcow2Header {
     pub const MAX_L1_SIZE: u32 = 32_u32 << 20;
     pub const MAX_REFCOUNT_TABLE_SIZE: u32 = 8_u32 << 20;
 
-    pub fn from_buf(header_buf: &Vec<u8>) -> Qcow2Result<Self> {
+    pub fn from_buf(header_buf: &[u8]) -> Qcow2Result<Self> {
         let bincode = bincode::DefaultOptions::new()
             .with_fixint_encoding()
             .with_big_endian();
