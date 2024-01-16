@@ -5,8 +5,8 @@ extern crate utilities;
 mod sync_io_integretion {
     use crypto_hash::{hex_digest, Algorithm};
     use qcow2_rs::dev::*;
+    use qcow2_rs::qcow2_default_params;
     use qcow2_rs::utils::*;
-    use qcow2_rs::{page_aligned_vec, qcow2_default_params};
     use std::path::PathBuf;
     use tokio::runtime::Runtime;
     use utilities::*;
@@ -18,7 +18,7 @@ mod sync_io_integretion {
 
         dev.qcow2_prep_io().await.unwrap();
 
-        let mut buf = page_aligned_vec!(u8, size as usize);
+        let mut buf = qcow2_rs::helpers::Qcow2IoBuf::<u8>::new(size as usize);
         dev.read_at(&mut buf, 0).await.unwrap();
 
         hex_digest(Algorithm::MD5, &buf)

@@ -89,24 +89,6 @@ impl_int_alignment_for_primitive!(usize);
 pub type BoxedFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
 pub type Qcow2FutureResult<'a, T> = BoxedFuture<'a, Qcow2Result<T>>;
 
-#[macro_export]
-macro_rules! page_aligned_vec {
-    ($type:ty, $size:expr) => {{
-        #[repr(C, align(4096))]
-        #[derive(Clone)]
-        struct PageAlignedBuf([u8; 512]);
-
-        let sz = ($size + 511) & !511;
-        let nr = sz / 512;
-        let buf = Vec::<PageAlignedBuf>::with_capacity(nr);
-        unsafe {
-            let mut a: Vec<$type> = std::mem::transmute(buf);
-            a.set_len(sz / core::mem::size_of::<$type>());
-            a
-        }
-    }};
-}
-
 /// Slice like buffer, which address is aligned with 4096.
 ///
 pub struct Qcow2IoBuf<T> {
