@@ -56,46 +56,6 @@ pub struct WriteArgs {
 }
 
 #[derive(Args, Debug)]
-pub struct ClusterArgs {
-    /// qcow2 image path
-    file: PathBuf,
-
-    /// free flag
-    #[clap(
-        long,
-        short,
-        default_value_t = false,
-        requires("start"),
-        requires("end")
-    )]
-    free: bool,
-
-    /// allocate flag
-    #[clap(long, short, default_value_t = false, requires("number"))]
-    alloc: bool,
-
-    /// number of clusters to allocate
-    #[clap(short, long, default_value_t = 1)]
-    number: usize,
-
-    /// start offset of clusters to free
-    #[clap(short, long, value_parser=maybe_hex::<u64>, default_value_t = 0)]
-    start: u64,
-
-    /// end offset of clusters to free
-    #[clap(short, long, value_parser=maybe_hex::<u64>, default_value_t = 0)]
-    end: u64,
-
-    /// how many refblock slices allowed in refblock cache
-    #[clap(long, default_value_t = 64)]
-    max_slices: usize,
-
-    /// refblock slice size
-    #[clap(long, default_value_t = 4096)]
-    slice_size: usize,
-}
-
-#[derive(Args, Debug)]
 pub struct MapArgs {
     /// virtual address
     #[clap(short, long, value_parser=maybe_hex::<u64>)]
@@ -184,9 +144,6 @@ pub enum Commands {
 
     /// Map qcow2 virtual address into host cluster offset (for development only, may be removed in future)
     Map(MapArgs),
-
-    /// Allocate or free clusters (for development only, may be removed in future)
-    Cluster(ClusterArgs),
 }
 
 #[derive(Parser)]
@@ -509,42 +466,6 @@ fn map_qcow2(args: MapArgs) -> Qcow2Result<()> {
     Ok(())
 }
 
-fn cluster_qcow2(args: ClusterArgs) -> Qcow2Result<()> {
-    let rt = Runtime::new().unwrap();
-    rt.block_on(async move {
-        let slice_bits = args.slice_size.ilog2().try_into().unwrap();
-        let rb_cache = Some((slice_bits, args.max_slices << slice_bits));
-        let p = qcow2_rs::dev::Qcow2DevParams::new(9, rb_cache, None, false, false);
-
-        let dev = qcow2_setup_dev_tokio(&args.file, &p).await.unwrap();
-
-        if args.alloc {
-            let res = dev.allocate_clusters(args.number).await.unwrap().unwrap();
-            println!(
-                "Clusters: 0x{:x} - 0x{:x} allocated",
-                res.0,
-                res.0 + (res.1 << dev.info.cluster_bits()) as u64
-            );
-        }
-
-        if args.free {
-            let num = (args.end - args.start) >> dev.info.cluster_bits();
-
-            println!("Clusters: 0x{:x} - 0x{:x} freed", args.start, num);
-            dev.free_clusters(args.start, num as usize).await.unwrap();
-            println!("Clusters: 0x{:x} - 0x{:x} freed", args.start, args.end);
-        }
-        dev.flush_meta().await.unwrap();
-
-        println!(
-            "Total allocated cluster {}",
-            dev.count_alloc_clusters().await.unwrap()
-        );
-    });
-
-    Ok(())
-}
-
 fn info_qcow2(args: InfoArgs) -> Qcow2Result<()> {
     let rt = Runtime::new().unwrap();
     rt.block_on(async move {
@@ -709,7 +630,6 @@ fn main() {
         Commands::Dump(arg) => dump_qcow2(arg).unwrap(),
         Commands::Format(arg) => format_qcow2(arg).unwrap(),
         Commands::Map(arg) => map_qcow2(arg).unwrap(),
-        Commands::Cluster(arg) => cluster_qcow2(arg).unwrap(),
         Commands::Info(arg) => info_qcow2(arg).unwrap(),
         Commands::Write(arg) => write_qcow2(arg).unwrap(),
         Commands::Read(arg) => read_qcow2(arg).unwrap(),

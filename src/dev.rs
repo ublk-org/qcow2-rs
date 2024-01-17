@@ -1003,7 +1003,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
     }
 
     /// free allocated clusters
-    pub async fn free_clusters(&self, mut host_cluster: u64, mut count: usize) -> Qcow2Result<()> {
+    async fn free_clusters(&self, mut host_cluster: u64, mut count: usize) -> Qcow2Result<()> {
         let info = &self.info;
         let mut first_zero = true;
 
@@ -1344,7 +1344,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
 
     /// Allocate clusters, so far the allocation can't cross each refblock boundary.
     /// But may return clusters less than requested.
-    pub async fn allocate_clusters(&self, count: usize) -> Qcow2Result<Option<(u64, usize)>> {
+    async fn allocate_clusters(&self, count: usize) -> Qcow2Result<Option<(u64, usize)>> {
         let info = &self.info;
         let mut host_offset = self.free_cluster_offset.load(Ordering::Relaxed);
 
@@ -1378,7 +1378,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         }
     }
 
-    pub async fn allocate_cluster(&self) -> Qcow2Result<Option<(u64, usize)>> {
+    async fn allocate_cluster(&self) -> Qcow2Result<Option<(u64, usize)>> {
         self.allocate_clusters(1).await
     }
 
@@ -1423,7 +1423,8 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         Ok(Some(total))
     }
 
-    pub async fn count_alloc_clusters(&self) -> Qcow2Result<usize> {
+    #[allow(dead_code)]
+    pub(crate) async fn count_alloc_clusters(&self) -> Qcow2Result<usize> {
         let info = &self.info;
         let mut offset = 0_u64;
         let mut total = 0;
