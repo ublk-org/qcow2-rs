@@ -352,11 +352,30 @@ fn dump_refcount_table(
 }
 
 fn __dump_header(f: &PathBuf, h: &Qcow2Header) {
-    println!("Qcow2 Header image {:?}", f);
+    println!("Qcow2 Header: image {:?} length {}", f, h.header_length());
     println!("\t version\t {}", h.version());
     println!("\t virtual_size\t {} MB", h.size() >> 20);
     println!("\t cluster_size\t {} KB", 1 << (h.cluster_bits() - 10));
     println!("\t refcount_order\t {}", h.refcount_order());
+    println!(
+        "\t crypt_method\t {}",
+        match h.crypt_method() {
+            0 => "no encryption".to_string(),
+            1 => "AES encryption".to_string(),
+            2 => "LUKS encryption".to_string(),
+            x => format!("{} ?", x),
+        }
+    );
+    if h.header_length() >= 104 {
+        println!(
+            "\t compression\t {}",
+            match h.compression_type() {
+                0 => "zlib".to_string(),
+                1 => "zstd".to_string(),
+                x => format!("{} ?", x),
+            }
+        );
+    }
     println!(
         "\t backing_file\t name {:?} format {:?}",
         h.backing_filename(),

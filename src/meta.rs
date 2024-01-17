@@ -704,6 +704,18 @@ impl Qcow2Header {
         self.raw.version
     }
 
+    pub fn crypt_method(&self) -> u32 {
+        self.raw.crypt_method
+    }
+
+    pub fn compression_type(&self) -> u8 {
+        self.raw.compression_type
+    }
+
+    pub fn header_length(&self) -> u32 {
+        self.raw.header_length
+    }
+
     pub fn size(&self) -> u64 {
         self.raw.size
     }
