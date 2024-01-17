@@ -1474,7 +1474,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
     }
 
     #[inline]
-    pub async fn get_l2_entres(&self, off: u64, len: usize) -> Qcow2Result<Vec<L2Entry>> {
+    pub async fn get_l2_entries(&self, off: u64, len: usize) -> Qcow2Result<Vec<L2Entry>> {
         let info = &self.info;
         let start = off & (!(info.in_cluster_offset_mask) as u64);
         let end = (off + ((len + info.cluster_size()) as u64) - 1)
@@ -1707,7 +1707,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
             let mut last_len = 0;
             let mut idx = 0;
             let mut s = 0;
-            let l2_entries = self.get_l2_entres(offset, len).await?;
+            let l2_entries = self.get_l2_entries(offset, len).await?;
 
             while len > 0 {
                 let in_cluster_offset = offset as usize & info.in_cluster_offset_mask;
