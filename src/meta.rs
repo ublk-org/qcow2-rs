@@ -5,9 +5,8 @@
 use crate::dev::Qcow2Info;
 use crate::error::Qcow2Result;
 use crate::helpers::IntAlignment;
+use crate::helpers::Qcow2IoBuf;
 use crate::numerical_enum;
-use crate::page_aligned_vec;
-use crate::zero_buf;
 use bincode::Options;
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
@@ -421,7 +420,7 @@ impl Qcow2Header {
     pub const MAX_L1_SIZE: u32 = 32_u32 << 20;
     pub const MAX_REFCOUNT_TABLE_SIZE: u32 = 8_u32 << 20;
 
-    pub fn from_buf(header_buf: &Vec<u8>) -> Qcow2Result<Self> {
+    pub fn from_buf(header_buf: &[u8]) -> Qcow2Result<Self> {
         let bincode = bincode::DefaultOptions::new()
             .with_fixint_encoding()
             .with_big_endian();
@@ -962,13 +961,13 @@ impl TableEntry for L1Entry {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug)]
 pub struct L1Table {
     header_entries: u32,
     dirty_blocks: RefCell<VecDeque<u32>>,
     bs_bits: u8,
     offset: Option<u64>,
-    data: Box<[L1Entry]>,
+    data: Qcow2IoBuf<L1Entry>,
 }
 
 impl L1Table {
@@ -989,12 +988,12 @@ impl L1Table {
     pub fn clone_and_grow(&self, at_least_index: usize, cluster_size: usize) -> Self {
         let new_size = std::cmp::max(at_least_index + 1, self.data.len());
         let new_size = new_size.align_up(cluster_size).unwrap();
-        let mut new_data = page_aligned_vec!(L1Entry, new_size);
+        let mut new_data = Qcow2IoBuf::<L1Entry>::new(new_size);
         new_data[..self.data.len()].copy_from_slice(&self.data);
 
         Self {
             offset: None,
-            data: new_data.into_boxed_slice(),
+            data: new_data,
             bs_bits: self.bs_bits,
             header_entries: self.data.len() as u32,
             dirty_blocks: RefCell::new(self.dirty_blocks.borrow().clone()),
@@ -1015,13 +1014,14 @@ impl L1Table {
 
 impl_top_table_traits!(L1Table, L1Entry, data);
 
-impl From<Box<[L1Entry]>> for L1Table {
-    fn from(data: Box<[L1Entry]>) -> Self {
+impl From<Qcow2IoBuf<L1Entry>> for L1Table {
+    fn from(data: Qcow2IoBuf<L1Entry>) -> Self {
         Self {
+            bs_bits: 0,
+            header_entries: 0,
             offset: None,
             data,
             dirty_blocks: RefCell::new(VecDeque::new()),
-            ..Default::default()
         }
     }
 }
@@ -1356,11 +1356,11 @@ impl TableEntry for L2Entry {
 // return cluster_offset + (offset % cluster_size)
 //
 // [*] this changes if Extended L2 Entries are enabled, see next section
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct L2Table {
     offset: Option<u64>,
     cluster_bits: u32,
-    data: Box<[L2Entry]>,
+    data: Qcow2IoBuf<L2Entry>,
 }
 
 impl L2Table {
@@ -1428,8 +1428,8 @@ impl L2Table {
     }
 }
 
-impl From<Box<[L2Entry]>> for L2Table {
-    fn from(data: Box<[L2Entry]>) -> Self {
+impl From<Qcow2IoBuf<L2Entry>> for L2Table {
+    fn from(data: Qcow2IoBuf<L2Entry>) -> Self {
         Self {
             offset: None,
             cluster_bits: 0,
@@ -1496,12 +1496,12 @@ impl TableEntry for RefTableEntry {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug)]
 pub struct RefTable {
     dirty_blocks: RefCell<VecDeque<u32>>,
     bs_bits: u8,
     offset: Option<u64>,
-    data: Box<[RefTableEntry]>,
+    data: Qcow2IoBuf<RefTableEntry>,
 }
 
 impl RefTable {
@@ -1525,13 +1525,13 @@ impl RefTable {
             (clusters * cluster_size + bs, None)
         };
 
-        let mut new_data = page_aligned_vec!(RefTableEntry, new_size);
-        zero_buf!(new_data);
+        let mut new_data = Qcow2IoBuf::<RefTableEntry>::new(new_size);
+        new_data.zero_buf();
         new_data[..self.data.len()].copy_from_slice(&self.data);
 
         Self {
             offset: new_off,
-            data: new_data.into_boxed_slice(),
+            data: new_data,
             dirty_blocks: RefCell::new(self.dirty_blocks.borrow().clone()),
             bs_bits: self.bs_bits,
         }
@@ -1550,12 +1550,13 @@ impl RefTable {
     }
 }
 
-impl From<Box<[RefTableEntry]>> for RefTable {
-    fn from(data: Box<[RefTableEntry]>) -> Self {
+impl From<Qcow2IoBuf<RefTableEntry>> for RefTable {
+    fn from(data: Qcow2IoBuf<RefTableEntry>) -> Self {
         Self {
             data,
             dirty_blocks: RefCell::new(VecDeque::new()),
-            ..Default::default()
+            bs_bits: 0,
+            offset: None,
         }
     }
 }
@@ -1586,7 +1587,7 @@ impl TableEntry for RefBlockEntry {
 #[derive(Debug)]
 pub struct RefBlock {
     offset: Option<u64>,
-    raw_data: Box<[u8]>,
+    raw_data: Qcow2IoBuf<RefBlockEntry>,
     refcount_order: u8,
 }
 
@@ -1604,35 +1605,35 @@ impl RefBlock {
 
     #[inline(always)]
     fn __get(&self, index: usize) -> u64 {
+        let raw_data = &self.raw_data.as_u8_slice();
         match self.refcount_order {
             // refcount_bits == 1
-            0 => ((self.raw_data[index / 8] >> (index % 8)) & 0b0000_0001) as u64,
+            0 => ((raw_data[index / 8] >> (index % 8)) & 0b0000_0001) as u64,
 
             // refcount_bits == 2
-            1 => ((self.raw_data[index / 4] >> (index % 4)) & 0b0000_0011) as u64,
+            1 => ((raw_data[index / 4] >> (index % 4)) & 0b0000_0011) as u64,
 
             // refcount_bits == 4
-            2 => ((self.raw_data[index / 2] >> (index % 2)) & 0b0000_1111) as u64,
+            2 => ((raw_data[index / 2] >> (index % 2)) & 0b0000_1111) as u64,
 
             // refcount_bits == 8
-            3 => self.raw_data[index] as u64,
+            3 => raw_data[index] as u64,
 
             // refcount_bits == 16
-            4 => u16::from_be_bytes(self.raw_data[index * 2..index * 2 + 2].try_into().unwrap())
-                as u64,
+            4 => u16::from_be_bytes(raw_data[index * 2..index * 2 + 2].try_into().unwrap()) as u64,
 
             // refcount_bits == 32
-            5 => u32::from_be_bytes(self.raw_data[index * 4..index * 4 + 4].try_into().unwrap())
-                as u64,
+            5 => u32::from_be_bytes(raw_data[index * 4..index * 4 + 4].try_into().unwrap()) as u64,
 
             // refcount_bits == 64
-            6 => u64::from_be_bytes(self.raw_data[index * 8..index * 8 + 8].try_into().unwrap()),
+            6 => u64::from_be_bytes(raw_data[index * 8..index * 8 + 8].try_into().unwrap()),
 
             _ => unreachable!(),
         }
     }
 
     fn __set(&mut self, index: usize, value: u64) -> Qcow2Result<()> {
+        let raw_data = &mut self.raw_data.as_u8_slice_mut();
         match self.refcount_order {
             // refcount_bits == 1
             0 => {
@@ -1643,8 +1644,7 @@ impl RefBlock {
                     )
                     .into());
                 }
-                self.raw_data[index / 8] = (self.raw_data[index / 8]
-                    & !(0b0000_0001 << (index % 8)))
+                raw_data[index / 8] = (raw_data[index / 8] & !(0b0000_0001 << (index % 8)))
                     | ((value as u8) << (index % 8));
             }
 
@@ -1657,8 +1657,7 @@ impl RefBlock {
                     )
                     .into());
                 }
-                self.raw_data[index / 4] = (self.raw_data[index / 4]
-                    & !(0b0000_0011 << (index % 4)))
+                raw_data[index / 4] = (raw_data[index / 4] & !(0b0000_0011 << (index % 4)))
                     | ((value as u8) << (index % 4));
             }
 
@@ -1671,8 +1670,7 @@ impl RefBlock {
                     )
                     .into());
                 }
-                self.raw_data[index / 2] = (self.raw_data[index / 2]
-                    & !(0b0000_1111 << (index % 2)))
+                raw_data[index / 2] = (raw_data[index / 2] & !(0b0000_1111 << (index % 2)))
                     | ((value as u8) << (index % 2));
             }
 
@@ -1685,7 +1683,7 @@ impl RefBlock {
                     )
                     .into());
                 }
-                self.raw_data[index] = value as u8;
+                raw_data[index] = value as u8;
             }
 
             // refcount_bits == 16
@@ -1697,8 +1695,8 @@ impl RefBlock {
                     )
                     .into());
                 }
-                self.raw_data[index * 2] = (value >> 8) as u8;
-                self.raw_data[index * 2 + 1] = value as u8;
+                raw_data[index * 2] = (value >> 8) as u8;
+                raw_data[index * 2 + 1] = value as u8;
             }
 
             // refcount_bits == 32
@@ -1710,15 +1708,15 @@ impl RefBlock {
                     )
                     .into());
                 }
-                self.raw_data[index * 4] = (value >> 24) as u8;
-                self.raw_data[index * 4 + 1] = (value >> 16) as u8;
-                self.raw_data[index * 4 + 2] = (value >> 8) as u8;
-                self.raw_data[index * 4 + 3] = value as u8;
+                raw_data[index * 4] = (value >> 24) as u8;
+                raw_data[index * 4 + 1] = (value >> 16) as u8;
+                raw_data[index * 4 + 2] = (value >> 8) as u8;
+                raw_data[index * 4 + 3] = value as u8;
             }
 
             // refcount_bits == 64
             6 => {
-                let array: &mut [u8; 8] = (&mut self.raw_data[index * 8..index * 8 + 8])
+                let array: &mut [u8; 8] = (&mut raw_data[index * 8..index * 8 + 8])
                     .try_into()
                     .unwrap();
                 *array = value.to_be_bytes();
@@ -1811,7 +1809,7 @@ impl Table for RefBlock {
     impl_table_gen_funcs!(raw_data);
 
     fn entries(&self) -> usize {
-        self.raw_data.len() * 8 / (1 << self.refcount_order)
+        self.byte_size() * 8 / (1 << self.refcount_order)
     }
 
     fn get(&self, index: usize) -> Self::Entry {
@@ -1826,21 +1824,18 @@ impl Table for RefBlock {
         self.__set(index, value.into_plain())
     }
 
+    /// RefBlock is special, since RefBlockEntry is defined as u64
     fn byte_size(&self) -> usize {
-        self.raw_data.len()
+        self.raw_data.len() * 8
     }
 }
 
-impl From<Box<[RefBlockEntry]>> for RefBlock {
-    fn from(data: Box<[RefBlockEntry]>) -> Self {
-        let len = data.len() * size_of::<RefBlockEntry>();
-        let ptr = Box::into_raw(data);
-        let _data: Box<[u8]> =
-            unsafe { Box::from_raw(std::slice::from_raw_parts_mut(ptr as *mut u8, len)) };
+impl From<Qcow2IoBuf<RefBlockEntry>> for RefBlock {
+    fn from(data: Qcow2IoBuf<RefBlockEntry>) -> Self {
         Self {
             offset: None,
             refcount_order: 0,
-            raw_data: _data,
+            raw_data: data,
         }
     }
 }
@@ -1859,7 +1854,7 @@ where
     }
 }
 
-pub trait Table: From<Box<[Self::Entry]>> {
+pub trait Table: From<Qcow2IoBuf<Self::Entry>> {
     type Entry: TableEntry;
 
     fn entries(&self) -> usize;
@@ -1889,11 +1884,11 @@ pub trait Table: From<Box<[Self::Entry]>> {
     }
 
     fn new_empty(offset: Option<u64>, size: usize) -> Self {
-        let mut table = page_aligned_vec!(Self::Entry, size);
+        let table = Qcow2IoBuf::<Self::Entry>::new(size);
         unsafe {
             std::ptr::write_bytes(table.as_mut_ptr(), 0, table.len());
         }
-        let mut table: Self = table.into_boxed_slice().into();
+        let mut table: Self = table.into();
         table.set_offset(offset);
 
         table

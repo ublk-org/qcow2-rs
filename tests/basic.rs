@@ -4,8 +4,9 @@ extern crate utilities;
 mod integretion {
     use crypto_hash::{hex_digest, Algorithm};
     use qcow2_rs::dev::*;
+    use qcow2_rs::helpers::Qcow2IoBuf;
+    use qcow2_rs::qcow2_default_params;
     use qcow2_rs::utils::*;
-    use qcow2_rs::{page_aligned_vec, qcow2_default_params};
     use rand::Rng;
     use std::io::Read;
     use std::path::PathBuf;
@@ -42,8 +43,8 @@ mod integretion {
             let img_file = make_temp_qcow2_img(size, cluster_bits, 4);
             let path = PathBuf::from(img_file.path());
             let params = qcow2_default_params!(false, false);
-            let mut buf = page_aligned_vec!(u8, size as usize);
-            let mut buf2 = page_aligned_vec!(u8, size as usize);
+            let mut buf = Qcow2IoBuf::<u8>::new(size as usize);
+            let mut buf2 = Qcow2IoBuf::<u8>::new(size as usize);
             let bsize = size as usize;
             let boff = 8192;
 
@@ -99,7 +100,7 @@ mod integretion {
             let bsize = 512_u64 << 10;
 
             // build data source from /dev/random
-            let mut buf = page_aligned_vec!(u8, bsize as usize);
+            let mut buf = Qcow2IoBuf::<u8>::new(bsize as usize);
             let raw_f = make_rand_raw_img(bsize, cluster_bits);
             let raw_path = raw_f.path().to_str().unwrap();
             let mut file = std::fs::File::open(raw_path).unwrap();
@@ -140,7 +141,7 @@ mod integretion {
 
             for off in (0..size).step_by(rsize) {
                 let start = Instant::now();
-                let mut buf = page_aligned_vec!(u8, rsize);
+                let mut buf = Qcow2IoBuf::<u8>::new(rsize);
                 let r = dev.read_at(&mut buf, off).await.unwrap();
                 assert!(r == buf.len());
                 duration += start.elapsed();
@@ -171,7 +172,7 @@ mod integretion {
             let params = qcow2_default_params!(false, false);
 
             // build data source from /dev/random
-            let mut buf = page_aligned_vec!(u8, size as usize);
+            let mut buf = Qcow2IoBuf::<u8>::new(size as usize);
             let raw_f = make_rand_raw_img(size, cluster_bits);
             let raw_path = raw_f.path().to_str().unwrap();
             let mut file = std::fs::File::open(raw_path).unwrap();
@@ -180,7 +181,7 @@ mod integretion {
             let dev = qcow2_setup_dev_tokio(&path, &params).await.unwrap();
 
             let write = dev.write_at(&buf, 0);
-            let mut rbuf = page_aligned_vec!(u8, size as usize);
+            let mut rbuf = Qcow2IoBuf::<u8>::new(size as usize);
             let read = dev.read_at(&mut rbuf, 0);
 
             //run write and read concurrently
@@ -256,7 +257,7 @@ mod integretion {
 
                     let off = rng.gen_range(0..blocks) * bs;
                     let bsize = rng.gen_range(min_bs..=max_bs) * bs;
-                    let mut wbuf = page_aligned_vec!(u8, bsize as usize);
+                    let mut wbuf = Qcow2IoBuf::<u8>::new(bsize as usize);
                     rng.fill(&mut wbuf[..]);
 
                     println!("randwrite: off {:x} len {}", off, bsize);
@@ -271,7 +272,7 @@ mod integretion {
 
                     let off = rng.gen_range(0..blocks) * bs;
                     let bsize = rng.gen_range(min_bs..=max_bs) * bs;
-                    let mut rbuf = page_aligned_vec!(u8, bsize as usize);
+                    let mut rbuf = Qcow2IoBuf::<u8>::new(bsize as usize);
 
                     println!("randread: off {:x} len {}", off, bsize);
                     d.read_at(&mut rbuf, off).await.unwrap();
@@ -309,7 +310,7 @@ mod integretion {
             // write over resized device backing by external image
             let buf_len = 4 << cluster_bits;
             let mut rng = rand::thread_rng();
-            let mut wbuf = page_aligned_vec!(u8, buf_len);
+            let mut wbuf = Qcow2IoBuf::<u8>::new(buf_len);
             rng.fill(&mut wbuf[..]);
             let off = (1 << cluster_bits) / 2; //cross cluster write
             let wbuf_md5 = hex_digest(Algorithm::MD5, &wbuf);
@@ -319,7 +320,7 @@ mod integretion {
             let dev = qcow2_setup_dev_tokio(&path, &params).await.unwrap();
 
             dev.write_at(&wbuf, off as u64).await.unwrap();
-            let mut rbuf = page_aligned_vec!(u8, buf_len);
+            let mut rbuf = Qcow2IoBuf::<u8>::new(buf_len);
             dev.read_at(&mut rbuf, off as u64).await.unwrap();
             let rbuf_md5 = hex_digest(Algorithm::MD5, &rbuf);
 

@@ -2,10 +2,10 @@ use clap::{Args, Parser, Subcommand};
 use clap_num::maybe_hex;
 use qcow2_rs::dev::{Qcow2DevParams, Qcow2Info};
 use qcow2_rs::error::Qcow2Result;
+use qcow2_rs::helpers::Qcow2IoBuf;
 use qcow2_rs::meta::{
     L1Table, L2Table, Qcow2FeatureType, Qcow2Header, RefBlock, RefTable, Table, TableEntry,
 };
-use qcow2_rs::page_aligned_vec;
 use qcow2_rs::utils::qcow2_setup_dev_tokio;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
@@ -620,7 +620,7 @@ fn read_qcow2(args: ReadArgs) -> Qcow2Result<()> {
             eprintln!("unaligned offset {:x} or len {:x}", args.start, len);
         }
 
-        let mut buf = page_aligned_vec!(u8, len);
+        let mut buf = Qcow2IoBuf::<u8>::new(len);
 
         dev.read_at(&mut buf, args.start)
             .await
@@ -648,7 +648,7 @@ fn write_qcow2(args: WriteArgs) -> Qcow2Result<()> {
             eprintln!("unaligned offset {:x} or len {:x}", args.start, len);
         }
 
-        let mut buf = page_aligned_vec!(u8, len);
+        let mut buf = Qcow2IoBuf::<u8>::new(len);
 
         let pattern = (0..=15).cycle().take(buf.len());
         for (elem, pattern_element) in buf.iter_mut().zip(pattern) {

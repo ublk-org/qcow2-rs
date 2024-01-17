@@ -1,8 +1,8 @@
 use crate::dev::{Qcow2Dev, Qcow2DevParams};
 use crate::error::Qcow2Result;
+use crate::helpers::Qcow2IoBuf;
 use crate::meta::Qcow2Header;
 use crate::ops::*;
-use crate::page_aligned_vec;
 #[cfg(not(target_os = "windows"))]
 use crate::sync_io::Qcow2IoSync;
 #[cfg(target_os = "linux")]
@@ -22,7 +22,7 @@ pub fn qcow2_alloc_dev_sync<T: Qcow2IoOps>(
     io: T,
     params: &Qcow2DevParams,
 ) -> Qcow2Result<(Qcow2Dev<T>, Option<PathBuf>)> {
-    let mut buf = page_aligned_vec!(u8, 4096);
+    let mut buf = Qcow2IoBuf::<u8>::new(4096);
     {
         use std::io::Read;
         let mut file = std::fs::File::open(path).unwrap();
@@ -45,7 +45,7 @@ pub async fn qcow2_alloc_dev<T: Qcow2IoOps>(
     io: T,
     params: &Qcow2DevParams,
 ) -> Qcow2Result<(Qcow2Dev<T>, Option<PathBuf>)> {
-    let mut buf = page_aligned_vec!(u8, 4096);
+    let mut buf = Qcow2IoBuf::<u8>::new(4096);
     let _ = io.read_to(0, &mut buf).await;
     let header = Qcow2Header::from_buf(&buf)?;
     let back_path = match header.backing_filename() {

@@ -1,7 +1,7 @@
 use crate::cache::AsyncLruCache;
 use crate::cache::AsyncLruCacheEntry;
 use crate::error::Qcow2Result;
-use crate::helpers::qcow2_type_of;
+use crate::helpers::{qcow2_type_of, Qcow2IoBuf};
 use crate::meta::{
     L1Entry, L1Table, L2Entry, L2Table, Mapping, MappingSource, Qcow2Header, RefBlock, RefTable,
     RefTableEntry, SplitGuestOffset, Table, TableEntry,
@@ -500,10 +500,10 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         let res = self.file.fallocate(offset, len, flags).await;
         match res {
             Err(_) => {
-                let mut zero_data = crate::page_aligned_vec!(u8, len);
-                zero_buf!(zero_data);
+                let mut zero_data = Qcow2IoBuf::<u8>::new(len);
 
                 log::trace!("discard fallback off {:x} len {}", offset, len);
+                zero_data.zero_buf();
                 self.call_write(offset, &zero_data).await
             }
             Ok(_) => Ok(()),
@@ -1537,7 +1537,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         let pad = (compressed_offset - aligned_off) as usize;
         let aligned_len = (pad + compressed_length + bs - 1) & (bs_mask as usize);
 
-        let mut _compressed_data = crate::page_aligned_vec!(u8, aligned_len);
+        let mut _compressed_data = Qcow2IoBuf::<u8>::new(aligned_len);
         let res = self.call_read(aligned_off, &mut _compressed_data).await?;
         if res != aligned_len {
             return Err("do_read_compressed: short read compressed data".into());
@@ -1880,7 +1880,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         host_off: u64,
         compressed_mapping: &Mapping,
     ) -> Qcow2Result<()> {
-        let mut cbuf = crate::page_aligned_vec!(u8, self.info.cluster_size());
+        let mut cbuf = Qcow2IoBuf::<u8>::new(self.info.cluster_size());
 
         // copy & write
         self.do_read_compressed(compressed_mapping.clone(), 0, &mut cbuf)
@@ -1899,7 +1899,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
     ) -> Qcow2Result<()> {
         match self.backing_file.as_ref() {
             Some(backing) => {
-                let mut cbuf = crate::page_aligned_vec!(u8, self.info.cluster_size());
+                let mut cbuf = Qcow2IoBuf::<u8>::new(self.info.cluster_size());
 
                 // copy & write
                 backing
@@ -2781,9 +2781,10 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
 #[cfg(test)]
 mod tests {
     use crate::dev::*;
+    use crate::helpers::Qcow2IoBuf;
+    use crate::qcow2_default_params;
     use crate::tokio_io::Qcow2IoTokio;
     use crate::utils::qcow2_setup_dev_tokio;
-    use crate::{page_aligned_vec, qcow2_default_params};
     use std::path::PathBuf;
     use tokio::runtime::Runtime;
     use utilities::*;
@@ -2909,7 +2910,7 @@ mod tests {
             let size = 64_u64 << 20;
             let img_file = make_temp_qcow2_img(size, 16, 4);
             let io = Qcow2IoTokio::new(&img_file.path().to_path_buf(), true, false).await;
-            let mut buf = page_aligned_vec!(u8, 4096);
+            let mut buf = Qcow2IoBuf::<u8>::new(4096);
             let _ = io.read_to(0, &mut buf).await;
             let header = Qcow2Header::from_buf(&buf).unwrap();
 
@@ -2929,7 +2930,7 @@ mod tests {
             let params = qcow2_default_params!(true, false);
             let dev = qcow2_setup_dev_tokio(&path, &params).await.unwrap();
 
-            let mut buf = page_aligned_vec!(u8, 1 << cluster_bits);
+            let mut buf = Qcow2IoBuf::<u8>::new(1 << cluster_bits);
             dev.read_at(&mut buf, 0).await.unwrap();
         });
     }

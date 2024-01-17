@@ -43,7 +43,7 @@ host cluster leak, format qcow2 image, ....
             .await
             .unwrap();
 
-        let mut buf = qcow2_rs::page_aligned_vec!(u8, 4096);
+        let mut buf = qcow2_rs::helpers::Qcow2IoBuf::<u8>::new(4096);
 
         // read 4096 bytes to `buf` from virt offset 0 of `test.qcow2`
         let _ = dev.read_at(&mut buf, 0).await.unwrap();

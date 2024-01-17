@@ -1,9 +1,10 @@
 use crypto_hash::{hex_digest, Algorithm};
 use qcow2_rs::dev::{Qcow2Dev, Qcow2DevParams};
+use qcow2_rs::helpers::Qcow2IoBuf;
 use qcow2_rs::meta::Qcow2Header;
 use qcow2_rs::ops::Qcow2IoOps;
+use qcow2_rs::qcow2_default_params;
 use qcow2_rs::utils::qcow2_setup_dev_tokio;
-use qcow2_rs::{page_aligned_vec, qcow2_default_params};
 use rand::Rng;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
@@ -159,10 +160,9 @@ pub async fn calculate_qcow2_data_md5(
     let path = PathBuf::from(qcow2f.path());
     let params = qcow2_default_params!(true, false);
     let dev = qcow2_setup_dev_tokio(&path, &params).await.unwrap();
+    let mut buf = Qcow2IoBuf::<u8>::new(size as usize);
 
-    let mut buf = page_aligned_vec!(u8, size as usize);
     dev.read_at(&mut buf, off).await.unwrap();
-
     hex_digest(Algorithm::MD5, &buf)
 }
 
@@ -177,7 +177,7 @@ pub async fn test_qcow2_dev_write_verify<T: Qcow2IoOps + 'static>(
     for (off, len) in input {
         let d = dev.clone();
         fv.push(local.spawn_local(async move {
-            let mut wbuf = page_aligned_vec!(u8, len as usize);
+            let mut wbuf = Qcow2IoBuf::<u8>::new(len as usize);
 
             let mut rng = rand::thread_rng();
             rng.fill(&mut wbuf[..]);
@@ -186,7 +186,8 @@ pub async fn test_qcow2_dev_write_verify<T: Qcow2IoOps + 'static>(
             d.write_at(&wbuf, off).await.unwrap();
             println!("write at {:x}/{}..done", off, len);
 
-            let mut rbuf = page_aligned_vec!(u8, len as usize);
+            let mut rbuf = Qcow2IoBuf::<u8>::new(len as usize);
+
             d.read_at(&mut rbuf, off).await.unwrap();
 
             let w_sum = hex_digest(Algorithm::MD5, &wbuf);
@@ -222,7 +223,7 @@ pub async fn test_cow_write(
     let size = dev.info.virtual_size();
     let buf_size = 2 << cluster_bits;
     let off = (buf_size / 4) as u64;
-    let mut buf = page_aligned_vec!(u8, buf_size);
+    let mut buf = Qcow2IoBuf::<u8>::new(buf_size);
     let mut rng = rand::thread_rng();
     rng.fill(&mut buf[..]);
     let buf_md5 = hex_digest(Algorithm::MD5, &buf);
