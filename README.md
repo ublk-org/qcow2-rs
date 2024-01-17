@@ -38,15 +38,19 @@ host cluster leak, format qcow2 image, ....
 
 ```Rust
 
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    rt.block_on(async move {
-        let params = qcow2_rs::dev::Qcow2DevParams::new(9, None, None, false, false);
-        let path = std::path::PathBuf::from("test.qcow2");
-        let dev = qcow2_rs::utils::qcow2_setup_dev_tokio(&path, &params)
-            .await
-            .unwrap();
+    use qcow2_rs::qcow2_default_params;
+    use qcow2_rs::utils::qcow2_setup_dev_uring;
+    use qcow2_rs::helpers::Qcow2IoBuf;
 
-        let mut buf = qcow2_rs::helpers::Qcow2IoBuf::<u8>::new(4096);
+    tokio_uring::start(async move {
+        let params = Qcow2DevParams::new(9, None, None, false, false);
+        let path = std::path::PathBuf::from("test.qcow2");
+
+        // setup one qcow2 device
+        let dev = qcow2_setup_dev_uring(&path, &params).await.unwrap();
+
+        // create one slice like & aligned IO buffer
+        let mut buf = Qcow2IoBuf::<u8>::new(4096);
 
         // read 4096 bytes to `buf` from virt offset 0 of `test.qcow2`
         let _ = dev.read_at(&mut buf, 0).await.unwrap();
