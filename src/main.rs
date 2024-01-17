@@ -2,7 +2,6 @@ use clap::{Args, Parser, Subcommand};
 use clap_num::maybe_hex;
 use qcow2_rs::dev::{Qcow2DevParams, Qcow2Info};
 use qcow2_rs::error::Qcow2Result;
-use qcow2_rs::helpers::Qcow2IoBuf;
 use qcow2_rs::meta::{
     L1Table, L2Table, Qcow2FeatureType, Qcow2Header, RefBlock, RefTable, Table, TableEntry,
 };
@@ -25,34 +24,6 @@ pub struct InfoArgs {
     /// verbose
     #[clap(long, short, default_value_t = false)]
     verbose: bool,
-}
-
-#[derive(Args, Debug)]
-pub struct ReadArgs {
-    /// qcow2 image path
-    file: PathBuf,
-
-    /// start offset of clusters to free
-    #[clap(short, long, value_parser=maybe_hex::<u64>)]
-    start: u64,
-
-    /// size to write
-    #[clap(short, long)]
-    len: usize,
-}
-
-#[derive(Args, Debug)]
-pub struct WriteArgs {
-    /// qcow2 image path
-    file: PathBuf,
-
-    /// start offset of clusters to free
-    #[clap(short, long, value_parser=maybe_hex::<u64>)]
-    start: u64,
-
-    /// size to write
-    #[clap(short, long)]
-    len: usize,
 }
 
 #[derive(Args, Debug)]
@@ -135,12 +106,6 @@ pub enum Commands {
 
     /// Check meta data integrity or cluster leak
     Check(CheckArgs),
-
-    /// Write data to qcow2 (for development only, may be removed in future)
-    Write(WriteArgs),
-
-    /// Read from qcow2 (for development only, may be removed in future)
-    Read(ReadArgs),
 
     /// Map qcow2 virtual address into host cluster offset (for development only, may be removed in future)
     Map(MapArgs),
@@ -548,63 +513,6 @@ fn info_qcow2(args: InfoArgs) -> Qcow2Result<()> {
     Ok(())
 }
 
-fn read_qcow2(args: ReadArgs) -> Qcow2Result<()> {
-    let rt = Runtime::new().unwrap();
-    rt.block_on(async move {
-        let p = qcow2_rs::qcow2_default_params!(false, false);
-        let dev = qcow2_setup_dev_tokio(&args.file, &p).await.unwrap();
-        let len = args.len;
-        let bs_mask = (1_u64 << dev.info.block_size_shift) - 1;
-
-        if (len & (bs_mask as usize) != 0) || (args.start & bs_mask != 0) {
-            eprintln!("unaligned offset {:x} or len {:x}", args.start, len);
-        }
-
-        let mut buf = Qcow2IoBuf::<u8>::new(len);
-
-        dev.read_at(&mut buf, args.start)
-            .await
-            .expect("read failed");
-        for i in 0..len {
-            print!("{:x} ", buf[i]);
-            if ((i + 1) % 16) == 0 {
-                println!("");
-            }
-        }
-    });
-
-    Ok(())
-}
-
-fn write_qcow2(args: WriteArgs) -> Qcow2Result<()> {
-    let rt = Runtime::new().unwrap();
-    rt.block_on(async move {
-        let p = qcow2_rs::qcow2_default_params!(false, false);
-        let dev = qcow2_setup_dev_tokio(&args.file, &p).await.unwrap();
-        let len = args.len;
-        let bs_mask = (1_u64 << dev.info.block_size_shift) - 1;
-
-        if (len & (bs_mask as usize) != 0) || (args.start & bs_mask != 0) {
-            eprintln!("unaligned offset {:x} or len {:x}", args.start, len);
-        }
-
-        let mut buf = Qcow2IoBuf::<u8>::new(len);
-
-        let pattern = (0..=15).cycle().take(buf.len());
-        for (elem, pattern_element) in buf.iter_mut().zip(pattern) {
-            *elem = pattern_element;
-        }
-
-        dev.write_at(&mut buf, args.start)
-            .await
-            .expect("write failed");
-
-        dev.flush_meta().await.unwrap();
-    });
-
-    Ok(())
-}
-
 fn check_qcow2(args: CheckArgs) -> Qcow2Result<()> {
     let rt = Runtime::new().unwrap();
 
@@ -631,8 +539,6 @@ fn main() {
         Commands::Format(arg) => format_qcow2(arg).unwrap(),
         Commands::Map(arg) => map_qcow2(arg).unwrap(),
         Commands::Info(arg) => info_qcow2(arg).unwrap(),
-        Commands::Write(arg) => write_qcow2(arg).unwrap(),
-        Commands::Read(arg) => read_qcow2(arg).unwrap(),
         Commands::Check(arg) => check_qcow2(arg).unwrap(),
     };
 }
