@@ -874,6 +874,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         self.call_fsync(off, len, 0).await
     }
 
+    /// flush meta data in ram to disk
     pub async fn flush_meta(&self) -> Qcow2Result<()> {
         let info = &self.info;
 
@@ -1767,6 +1768,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         self.__read_at(buf, offset).await
     }
 
+    /// Read data to `buf` from the virtual `offset` of this qcow2 image
     pub async fn read_at(&self, buf: &mut [u8], offset: u64) -> Qcow2Result<usize> {
         self.__read_at(buf, offset).await
     }
@@ -2444,6 +2446,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         self.__write_at(buf, offset).await
     }
 
+    /// Write data in `buf` to the virtual `offset` of this qcow2 image
     pub async fn write_at(&self, buf: &[u8], offset: u64) -> Qcow2Result<()> {
         self.__write_at(buf, offset).await
     }
@@ -2453,6 +2456,8 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         self.need_flush.store(val, Ordering::Relaxed);
     }
 
+    /// Helper for checking if there is dirty meta data which needs
+    /// to be flushed to disk
     #[inline]
     pub fn need_flush_meta(&self) -> bool {
         self.need_flush.load(Ordering::Relaxed)
@@ -2585,6 +2590,8 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         return false;
     }
 
+    /// Return Host Cluster usage, such as, allocated clusters, how many of them
+    /// are compressed, ...
     pub async fn qcow2_cluster_usage<F>(&self, cls_usage: F) -> Qcow2Result<()>
     where
         F: Fn(&str, &Vec<&RangeInclusive<u64>>, Option<(usize, usize)>),
@@ -2752,7 +2759,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         Ok(())
     }
 
-    /// Qcow2 meta integrity check
+    /// Check Qcow2 meta integrity and cluster leak
     pub async fn check(&self) -> Qcow2Result<()> {
         self.check_mapping().await?;
 
@@ -2769,7 +2776,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         Ok(())
     }
 
-    /// Called before starting any qcow2 IO
+    /// Prepare everything(loading l1/refcount table) for handling any qcow2 IO
     #[async_recursion(?Send)]
     pub async fn qcow2_prep_io(&self) -> Qcow2Result<()> {
         match &self.backing_file {

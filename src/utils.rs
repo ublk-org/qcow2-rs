@@ -23,6 +23,8 @@ const DEF_HEADER_SIZE: usize = 4096;
 /// 64K is big enough to hold any kind of qcow2 header
 const MAX_HEADER_SIZE: usize = 65536;
 
+/// Allocate one qcow2 device and qcow2 header needs to be parsed
+/// for allocating the device.
 pub fn qcow2_alloc_dev_sync<T: Qcow2IoOps>(
     path: &PathBuf,
     io: T,
@@ -55,6 +57,8 @@ pub fn qcow2_alloc_dev_sync<T: Qcow2IoOps>(
     ))
 }
 
+/// Allocate one qcow2 device and qcow2 header needs to be parsed
+/// for allocating the device.
 pub async fn qcow2_alloc_dev<T: Qcow2IoOps>(
     path: &PathBuf,
     io: T,
@@ -84,11 +88,9 @@ pub async fn qcow2_alloc_dev<T: Qcow2IoOps>(
     ))
 }
 
-/// Setup qcow2 device from `path`
+/// Build one async helper which can setup one qcow2 device
 ///
-/// TODO: need to be more generic for covering other IO engine, maybe one macro,
-/// or trait trick
-
+/// The backing device is setup automatically in the built helper.
 #[macro_export]
 macro_rules! qcow2_setup_dev_fn {
     ($type:ty, $fn_name: ident) => {
@@ -119,6 +121,10 @@ macro_rules! qcow2_setup_dev_fn {
 qcow2_setup_dev_fn!(Qcow2IoUring, qcow2_setup_dev_uring);
 qcow2_setup_dev_fn!(crate::tokio_io::Qcow2IoTokio, qcow2_setup_dev_tokio);
 
+/// Build one helper which can setup one qcow2 device, and this helper
+/// needn't be async/.await
+///
+/// The backing device is setup automatically in the built helper.
 #[macro_export]
 macro_rules! qcow2_setup_dev_fn_sync {
     ($type:ty, $fn_name: ident) => {
