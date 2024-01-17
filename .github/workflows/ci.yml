@@ -9,7 +9,7 @@ env:
 
 jobs:
   build_linux:
-    name: Rust project - latest
+    name: qcow2_rs ubuntu
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -25,7 +25,7 @@ jobs:
       - run: cargo test -r
 
   build_win:
-    name: Rust project - latest
+    name: qcow2_rs windows
     runs-on: windows-latest
     strategy:
       matrix:
@@ -34,7 +34,7 @@ jobs:
     steps:
      - name: Checkout repository
        uses: actions/checkout@v4
-     - name: Install Chocolatey
+     - name: Install qemu-img
        run: |
         $qemuZipPath = Join-Path $env:USERPROFILE 'qemu.zip'
         Invoke-WebRequest -Uri 'https://cloudbase.it/downloads/qemu-img-win-x64-2_3_0.zip' -OutFile $qemuZipPath
