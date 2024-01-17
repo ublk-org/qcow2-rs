@@ -1,10 +1,12 @@
 use clap::{Args, Parser, Subcommand};
 use clap_num::maybe_hex;
-use qcow2_rs::dev::{Qcow2DevParams, Qcow2Info};
+use qcow2_rs::dev::{Qcow2Dev, Qcow2DevParams, Qcow2Info};
 use qcow2_rs::error::Qcow2Result;
+use qcow2_rs::helpers::Qcow2IoBuf;
 use qcow2_rs::meta::{
     L1Table, L2Table, Qcow2FeatureType, Qcow2Header, RefBlock, RefTable, Table, TableEntry,
 };
+use qcow2_rs::ops::Qcow2IoOps;
 use qcow2_rs::utils::qcow2_setup_dev_tokio;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
@@ -93,6 +95,21 @@ pub struct DumpArgs {
     file: PathBuf,
 }
 
+#[derive(Args, Debug)]
+pub struct ConvertArgs {
+    #[clap(long, short = 'f')]
+    fmt: String,
+
+    #[clap(long, short = 'O')]
+    output_fmt: String,
+
+    #[clap(long, short = 'o')]
+    output_file: PathBuf,
+
+    /// source image path
+    file: PathBuf,
+}
+
 #[derive(Subcommand)]
 pub enum Commands {
     /// Dump all kinds of qcow2 meta data
@@ -109,6 +126,9 @@ pub enum Commands {
 
     /// Map qcow2 virtual address into host cluster offset (for development only, may be removed in future)
     Map(MapArgs),
+
+    /// Convert between raw and qcow2 image
+    Convert(ConvertArgs),
 }
 
 #[derive(Parser)]
@@ -528,6 +548,172 @@ fn check_qcow2(args: CheckArgs) -> Qcow2Result<()> {
     Ok(())
 }
 
+async fn copy_from_qcow2<T: Qcow2IoOps>(
+    dev: &Qcow2Dev<T>,
+    dest: &mut std::fs::File,
+    off: u64,
+    bytes: usize,
+) -> Qcow2Result<()> {
+    let mut buf = Qcow2IoBuf::<u8>::new(bytes);
+    let _ = dev.read_at(&mut buf, off).await?;
+
+    dest.seek(SeekFrom::Start(off))?;
+    dest.write(&buf)?;
+    Ok(())
+}
+
+async fn copy_to_qcow2<T: Qcow2IoOps>(
+    dev: &Qcow2Dev<T>,
+    src: &mut std::fs::File,
+    off: u64,
+    bytes: usize,
+) -> Qcow2Result<()> {
+    let mut buf = Qcow2IoBuf::<u8>::new(bytes);
+
+    src.seek(SeekFrom::Start(off))?;
+    src.read(&mut buf)?;
+
+    let _ = dev.write_at(&buf, off).await?;
+    Ok(())
+}
+
+async fn convert_from_qcow2_dev<T: Qcow2IoOps>(
+    dev: &Qcow2Dev<T>,
+    raw: &PathBuf,
+) -> Qcow2Result<()> {
+    let mut file = std::fs::File::create(raw.clone()).unwrap();
+    let mut off: u64 = 0;
+    let buf_size = 64 << 20;
+    let total = dev.info.virtual_size();
+    while off < total {
+        let len = std::cmp::min(buf_size, total - off);
+
+        copy_from_qcow2(&dev, &mut file, off, len as usize)
+            .await
+            .unwrap();
+
+        off += len;
+    }
+
+    Ok(())
+}
+
+async fn convert_to_qcow2_dev<T: Qcow2IoOps>(raw: &PathBuf, dev: &Qcow2Dev<T>) -> Qcow2Result<()> {
+    let file_orig_size = std::fs::metadata(raw).unwrap().len();
+    let mut file = std::fs::OpenOptions::new().read(true).open(raw).unwrap();
+
+    let mut off: u64 = 0;
+    let buf_size = 64 << 20;
+    let total = file_orig_size;
+    while off < total {
+        let len = std::cmp::min(buf_size, total - off);
+        copy_to_qcow2(&dev, &mut file, off, len as usize)
+            .await
+            .unwrap();
+        off += len;
+    }
+    dev.flush_meta().await?;
+
+    Ok(())
+}
+
+fn convert_to_qcow2_prep(raw: &PathBuf, qcow2: &PathBuf) -> Qcow2Result<()> {
+    let cluster_bits = 16;
+    let cluster_size = 1 << cluster_bits;
+    let file_orig_size = std::fs::metadata(raw).unwrap().len();
+    let file_size = (file_orig_size + cluster_size - 1) & !(cluster_size - 1);
+
+    let img_buf = __format_qcow2_buf(file_size, cluster_bits, 4, 4096);
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .open(qcow2)
+        .unwrap();
+    f.write(&img_buf).unwrap();
+
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn convert_from_qcow2(qcow2: &PathBuf, raw: &PathBuf) -> Qcow2Result<()> {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+
+    rt.block_on(async {
+        let p = qcow2_rs::qcow2_default_params!(false, false);
+        let dev = qcow2_rs::utils::qcow2_setup_dev_tokio(qcow2, &p)
+            .await
+            .unwrap();
+        convert_from_qcow2_dev(&dev, raw).await.unwrap();
+    });
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn convert_from_qcow2(qcow2: &PathBuf, raw: &PathBuf) -> Qcow2Result<()> {
+    tokio_uring::start(async {
+        let p = qcow2_rs::qcow2_default_params!(false, true);
+        let dev = qcow2_rs::utils::qcow2_setup_dev_uring(qcow2, &p)
+            .await
+            .unwrap();
+
+        convert_from_qcow2_dev(&dev, raw).await.unwrap();
+    });
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn convert_to_qcow2(raw: &PathBuf, qcow2: &PathBuf) -> Qcow2Result<()> {
+    convert_to_qcow2_prep(raw, qcow2)?;
+    let rt = tokio::runtime::Runtime::new().unwrap();
+
+    rt.block_on(async {
+        let p = qcow2_rs::qcow2_default_params!(false, false);
+        let dev = qcow2_rs::utils::qcow2_setup_dev_tokio(qcow2, &p)
+            .await
+            .unwrap();
+        convert_to_qcow2_dev(raw, &dev).await.unwrap();
+    });
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn convert_to_qcow2(raw: &PathBuf, qcow2: &PathBuf) -> Qcow2Result<()> {
+    convert_to_qcow2_prep(raw, qcow2)?;
+
+    tokio_uring::start(async {
+        let p = qcow2_rs::qcow2_default_params!(false, true);
+        let dev = qcow2_rs::utils::qcow2_setup_dev_uring(qcow2, &p)
+            .await
+            .unwrap();
+
+        convert_to_qcow2_dev(raw, &dev).await.unwrap();
+    });
+    Ok(())
+}
+
+fn __convert_qcow2(args: ConvertArgs) -> Qcow2Result<()> {
+    let in_fmt = &args.fmt;
+    let out_fmt = &args.output_fmt;
+
+    if &args.file == &args.output_file {
+        return Err("input and output point to same file".into());
+    }
+
+    if in_fmt == "qcow2" && out_fmt == "raw" {
+        convert_from_qcow2(&args.file, &args.output_file)?;
+    } else if in_fmt == "raw" && out_fmt == "qcow2" {
+        convert_to_qcow2(&args.file, &args.output_file)?;
+    } else {
+        return Err("wrong input or output format".into());
+    }
+
+    Ok(())
+}
+
+fn convert_qcow2(args: ConvertArgs) -> Qcow2Result<()> {
+    __convert_qcow2(args)
+}
+
 fn main() {
     let cli = Cli::parse();
 
@@ -542,5 +728,6 @@ fn main() {
         Commands::Map(arg) => map_qcow2(arg).unwrap(),
         Commands::Info(arg) => info_qcow2(arg).unwrap(),
         Commands::Check(arg) => check_qcow2(arg).unwrap(),
+        Commands::Convert(arg) => convert_qcow2(arg).unwrap(),
     };
 }
