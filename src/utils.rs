@@ -17,18 +17,33 @@ macro_rules! qcow2_default_params {
     };
 }
 
+/// 4K is usually enough for holding generic qcow2 header
+const DEF_HEADER_SIZE: usize = 4096;
+
+/// 64K is big enough to hold any kind of qcow2 header
+const MAX_HEADER_SIZE: usize = 65536;
+
 pub fn qcow2_alloc_dev_sync<T: Qcow2IoOps>(
     path: &PathBuf,
     io: T,
     params: &Qcow2DevParams,
 ) -> Qcow2Result<(Qcow2Dev<T>, Option<PathBuf>)> {
-    let mut buf = Qcow2IoBuf::<u8>::new(4096);
-    {
+    fn read_header(path: &PathBuf, bytes: usize) -> Qcow2Result<Qcow2IoBuf<u8>> {
         use std::io::Read;
+        let mut buf = Qcow2IoBuf::<u8>::new(bytes);
         let mut file = std::fs::File::open(path).unwrap();
         file.read(&mut buf).unwrap();
+        Ok(buf)
     }
-    let header = Qcow2Header::from_buf(&buf)?;
+
+    let buf = read_header(path, DEF_HEADER_SIZE)?;
+    let header = match Qcow2Header::from_buf(&buf) {
+        Ok(h) => h,
+        Err(_) => {
+            let buf = read_header(path, MAX_HEADER_SIZE)?;
+            Qcow2Header::from_buf(&buf)?
+        }
+    };
     let back_path = match header.backing_filename() {
         None => None,
         Some(s) => Some(PathBuf::from(s.clone())),
@@ -45,9 +60,19 @@ pub async fn qcow2_alloc_dev<T: Qcow2IoOps>(
     io: T,
     params: &Qcow2DevParams,
 ) -> Qcow2Result<(Qcow2Dev<T>, Option<PathBuf>)> {
-    let mut buf = Qcow2IoBuf::<u8>::new(4096);
-    let _ = io.read_to(0, &mut buf).await;
-    let header = Qcow2Header::from_buf(&buf)?;
+    async fn read_header<T: Qcow2IoOps>(io: &T, bytes: usize) -> Qcow2Result<Qcow2IoBuf<u8>> {
+        let mut buf = Qcow2IoBuf::<u8>::new(bytes);
+        let _ = io.read_to(0, &mut buf).await?;
+        Ok(buf)
+    }
+    let buf = read_header(&io, DEF_HEADER_SIZE).await?;
+    let header = match Qcow2Header::from_buf(&buf) {
+        Ok(h) => h,
+        Err(_) => {
+            let buf = read_header(&io, MAX_HEADER_SIZE).await?;
+            Qcow2Header::from_buf(&buf)?
+        }
+    };
     let back_path = match header.backing_filename() {
         None => None,
         Some(s) => Some(PathBuf::from(s.clone())),
