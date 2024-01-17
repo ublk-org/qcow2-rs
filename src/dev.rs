@@ -170,7 +170,7 @@ impl Qcow2Info {
     }
 
     #[inline]
-    pub fn __max_l1_entries(size: u64, cluster_bits: usize, l2_entries: usize) -> usize {
+    pub(crate) fn __max_l1_entries(size: u64, cluster_bits: usize, l2_entries: usize) -> usize {
         let size_per_entry = (l2_entries as u64) << cluster_bits;
         let max_entries = Qcow2Header::MAX_L1_SIZE as usize / size_of::<u64>();
         let entries = ((size + size_per_entry - 1) / size_per_entry) as usize;
@@ -179,14 +179,14 @@ impl Qcow2Info {
     }
 
     #[inline]
-    pub fn get_max_l1_entries(size: u64, cluster_bits: usize) -> usize {
+    pub(crate) fn get_max_l1_entries(size: u64, cluster_bits: usize) -> usize {
         let l2_entries = (1usize << cluster_bits) / size_of::<u64>();
 
         Self::__max_l1_entries(size, cluster_bits, l2_entries)
     }
 
     #[inline(always)]
-    pub fn max_l1_entries(&self) -> usize {
+    pub(crate) fn max_l1_entries(&self) -> usize {
         Self::__max_l1_entries(
             self.virtual_size,
             self.cluster_shift as usize,
@@ -195,20 +195,21 @@ impl Qcow2Info {
     }
 
     #[inline]
-    pub fn __max_l1_size(max_l1_entries: usize, bs: usize) -> usize {
+    pub(crate) fn __max_l1_size(max_l1_entries: usize, bs: usize) -> usize {
         let entries = max_l1_entries;
 
         (entries * size_of::<u64>() + bs - 1) & !(bs - 1)
     }
 
+    #[allow(dead_code)]
     #[inline(always)]
-    pub fn max_l1_size(&self) -> usize {
+    pub(crate) fn max_l1_size(&self) -> usize {
         let entries = self.max_l1_entries();
 
         Self::__max_l1_size(entries, 1 << self.block_size_shift)
     }
 
-    pub fn __max_refcount_table_size(
+    pub(crate) fn __max_refcount_table_size(
         size: u64,
         cluster_size: usize,
         refcount_order: u8,
@@ -1451,7 +1452,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
     }
 
     #[inline]
-    pub async fn get_l2_entry(&self, virtual_offset: u64) -> Qcow2Result<L2Entry> {
+    async fn get_l2_entry(&self, virtual_offset: u64) -> Qcow2Result<L2Entry> {
         let info = &self.info;
         let split = SplitGuestOffset(virtual_offset);
         let key = split.l2_slice_key(info);
@@ -1474,7 +1475,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
     }
 
     #[inline]
-    pub async fn get_l2_entries(&self, off: u64, len: usize) -> Qcow2Result<Vec<L2Entry>> {
+    async fn get_l2_entries(&self, off: u64, len: usize) -> Qcow2Result<Vec<L2Entry>> {
         let info = &self.info;
         let start = off & (!(info.in_cluster_offset_mask) as u64);
         let end = (off + ((len + info.cluster_size()) as u64) - 1)
@@ -2761,7 +2762,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         Ok(())
     }
 
-    pub async fn __qcow2_prep_io(&self) -> Qcow2Result<()> {
+    pub(crate) async fn __qcow2_prep_io(&self) -> Qcow2Result<()> {
         self.load_l1_table().await?;
         self.load_refcount_table().await?;
 

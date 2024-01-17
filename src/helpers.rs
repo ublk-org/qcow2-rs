@@ -2,10 +2,7 @@
 // features (and making all conditionally-used features conditional themselves is too cumbersome to
 // be worth it).
 #![allow(dead_code)]
-use crate::error::Qcow2Result;
-use core::future::Future;
 use std::ops::{Deref, DerefMut};
-use std::pin::Pin;
 
 #[macro_export]
 macro_rules! numerical_enum {
@@ -85,9 +82,6 @@ impl_int_alignment_for_primitive!(u16);
 impl_int_alignment_for_primitive!(u32);
 impl_int_alignment_for_primitive!(u64);
 impl_int_alignment_for_primitive!(usize);
-
-pub type BoxedFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
-pub type Qcow2FutureResult<'a, T> = BoxedFuture<'a, Qcow2Result<T>>;
 
 /// Slice like buffer, which address is aligned with 4096.
 ///

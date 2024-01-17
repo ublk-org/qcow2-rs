@@ -3,19 +3,19 @@ use std::hash::Hash;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 
-pub struct AsyncLruCacheEntryInner<V> {
+pub(crate) struct AsyncLruCacheEntryInner<V> {
     value: V,
     lru: AtomicUsize,
     dirty: AtomicBool,
 }
 
-pub type AsyncLruCacheEntry<V> = Arc<AsyncLruCacheEntryInner<V>>;
+pub(crate) type AsyncLruCacheEntry<V> = Arc<AsyncLruCacheEntryInner<V>>;
 
 /// LRU cache
 ///
 /// Use lru_timer(counter) to simulate use timestamp, this way should
 /// be good for single context.
-pub struct AsyncLruCache<K: Clone + PartialEq + Eq + Hash + std::fmt::Debug, V> {
+pub(crate) struct AsyncLruCache<K: Clone + PartialEq + Eq + Hash + std::fmt::Debug, V> {
     rmap: std::sync::RwLock<HashMap<K, AsyncLruCacheEntry<V>>>,
     wmap: std::sync::Mutex<HashMap<K, AsyncLruCacheEntry<V>>>,
     limit: usize,
@@ -25,7 +25,7 @@ pub struct AsyncLruCache<K: Clone + PartialEq + Eq + Hash + std::fmt::Debug, V> 
 impl<K: Clone + PartialEq + Eq + Hash + std::fmt::Debug + std::cmp::PartialOrd, V>
     AsyncLruCache<K, V>
 {
-    pub fn new(size: usize) -> Self {
+    pub(crate) fn new(size: usize) -> Self {
         AsyncLruCache {
             rmap: Default::default(),
             wmap: Default::default(),
@@ -34,7 +34,11 @@ impl<K: Clone + PartialEq + Eq + Hash + std::fmt::Debug + std::cmp::PartialOrd, 
         }
     }
 
-    pub fn put_into_wmap_with<F: FnOnce() -> V>(&self, key: K, f: F) -> AsyncLruCacheEntry<V> {
+    pub(crate) fn put_into_wmap_with<F: FnOnce() -> V>(
+        &self,
+        key: K,
+        f: F,
+    ) -> AsyncLruCacheEntry<V> {
         let mut w = self.wmap.lock().unwrap();
         let r = self.rmap.read().unwrap();
 
@@ -50,7 +54,7 @@ impl<K: Clone + PartialEq + Eq + Hash + std::fmt::Debug + std::cmp::PartialOrd, 
     }
 
     /// Flush key/value pairs from wmap to rmap
-    pub fn commit_wmap(&self) -> Option<Vec<(K, AsyncLruCacheEntry<V>)>> {
+    pub(crate) fn commit_wmap(&self) -> Option<Vec<(K, AsyncLruCacheEntry<V>)>> {
         let mut w = self.wmap.lock().unwrap();
         let mut r = self.rmap.write().unwrap();
         let mut vec = Vec::new();
@@ -101,7 +105,7 @@ impl<K: Clone + PartialEq + Eq + Hash + std::fmt::Debug + std::cmp::PartialOrd, 
     }
 
     #[inline(always)]
-    pub fn get(&self, key: K) -> Option<AsyncLruCacheEntry<V>> {
+    pub(crate) fn get(&self, key: K) -> Option<AsyncLruCacheEntry<V>> {
         let map = self.rmap.read().unwrap();
         if let Some(entry) = map.get(&key) {
             self.update_lru(&entry);
@@ -111,13 +115,13 @@ impl<K: Clone + PartialEq + Eq + Hash + std::fmt::Debug + std::cmp::PartialOrd, 
         }
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         let map = self.rmap.read().unwrap();
 
         map.is_empty()
     }
 
-    pub fn shrink(&self) {
+    pub(crate) fn shrink(&self) {
         let mut map = self.rmap.write().unwrap();
         let mut k_vec = Vec::new();
 
@@ -132,7 +136,7 @@ impl<K: Clone + PartialEq + Eq + Hash + std::fmt::Debug + std::cmp::PartialOrd, 
         }
     }
 
-    pub fn get_dirty_entries(&self, start: K, end: K) -> Vec<(K, AsyncLruCacheEntry<V>)> {
+    pub(crate) fn get_dirty_entries(&self, start: K, end: K) -> Vec<(K, AsyncLruCacheEntry<V>)> {
         let map = self.rmap.read().unwrap();
         let mut vec = Vec::new();
 
@@ -191,7 +195,7 @@ impl<K: Clone + PartialEq + Eq + Hash + std::fmt::Debug + std::cmp::PartialOrd, 
 }
 
 impl<V> AsyncLruCacheEntryInner<V> {
-    pub fn new(val: V) -> Self {
+    pub(crate) fn new(val: V) -> Self {
         AsyncLruCacheEntryInner {
             value: val,
             lru: AtomicUsize::new(0),
@@ -200,16 +204,16 @@ impl<V> AsyncLruCacheEntryInner<V> {
     }
 
     #[inline(always)]
-    pub fn value(&self) -> &V {
+    pub(crate) fn value(&self) -> &V {
         &self.value
     }
 
     #[inline(always)]
-    pub fn is_dirty(&self) -> bool {
+    pub(crate) fn is_dirty(&self) -> bool {
         self.dirty.load(Ordering::Relaxed)
     }
 
-    pub fn set_dirty(&self, val: bool) {
+    pub(crate) fn set_dirty(&self, val: bool) {
         self.dirty.store(val, Ordering::Relaxed)
     }
 }
