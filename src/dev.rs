@@ -25,25 +25,25 @@ pub struct Qcow2Info {
     // min block size for writing out data to image, it is usually
     // logical block size of the disk for storing this image, so
     // all meta data has to be aligned with this block size
-    pub block_size_shift: u8,
-    pub cluster_shift: u8,
-    pub l2_index_shift: u8,
-    pub l2_slice_index_shift: u8,
-    pub l2_slice_bits: u8,
-    pub refcount_order: u8,
-    pub rb_slice_bits: u8,
-    pub rb_index_shift: u8,
-    pub rb_slice_index_shift: u8,
+    pub(crate) block_size_shift: u8,
+    pub(crate) cluster_shift: u8,
+    pub(crate) l2_index_shift: u8,
+    pub(crate) l2_slice_index_shift: u8,
+    pub(crate) l2_slice_bits: u8,
+    pub(crate) refcount_order: u8,
+    pub(crate) rb_slice_bits: u8,
+    pub(crate) rb_index_shift: u8,
+    pub(crate) rb_slice_index_shift: u8,
 
-    pub flags: u16,
-    pub l2_slice_entries: u32,
-    pub in_cluster_offset_mask: usize,
-    pub l2_index_mask: usize,
-    pub rb_index_mask: usize,
+    pub(crate) flags: u16,
+    pub(crate) l2_slice_entries: u32,
+    pub(crate) in_cluster_offset_mask: usize,
+    pub(crate) l2_index_mask: usize,
+    pub(crate) rb_index_mask: usize,
 
-    pub l2_cache_cnt: u32,
-    pub rb_cache_cnt: u32,
-    pub virtual_size: u64,
+    pub(crate) l2_cache_cnt: u32,
+    pub(crate) rb_cache_cnt: u32,
+    pub(crate) virtual_size: u64,
 }
 
 impl Qcow2Info {

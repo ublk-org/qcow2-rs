@@ -365,7 +365,7 @@ impl SplitGuestOffset {
 
     #[inline(always)]
     pub fn cluster_offset(&self, info: &Qcow2Info) -> u64 {
-        let cluster_bits = info.cluster_shift;
+        let cluster_bits = info.cluster_bits();
         (((self.l1_index(info) as u64) << (cluster_bits - 3)) + self.l2_index(info) as u64)
             << cluster_bits
     }
@@ -378,13 +378,13 @@ impl SplitGuestOffset {
 
     #[inline(always)]
     pub fn l2_index(&self, info: &Qcow2Info) -> usize {
-        let guest_offset = self.0 >> info.cluster_shift;
+        let guest_offset = self.0 >> info.cluster_bits();
         guest_offset as usize & info.l2_index_mask
     }
 
     #[inline(always)]
     pub fn l2_slice_index(&self, info: &Qcow2Info) -> usize {
-        let guest_offset = self.0 >> info.cluster_shift;
+        let guest_offset = self.0 >> info.cluster_bits();
         guest_offset as usize & (info.l2_slice_entries as usize - 1)
     }
 
@@ -1207,7 +1207,7 @@ impl L2Entry {
     #[inline]
     pub fn into_mapping(self, info: &Qcow2Info, guest_addr: &SplitGuestOffset) -> Mapping {
         //println!("into_mapping guest {:x} l2_entry {}", guest_addr.0, self);
-        let cluster_bits: u32 = info.cluster_shift.into();
+        let cluster_bits: u32 = info.cluster_bits() as u32;
         if let Some((offset, length)) = self.compressed_range(cluster_bits) {
             Mapping {
                 source: MappingSource::Compressed,

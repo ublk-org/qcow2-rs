@@ -149,7 +149,7 @@ fn dump_l1_table(
 
     for i in 0..header.l1_table_entries() {
         let e = l1.get(i);
-        let virt_l1_base = (i * info.l2_entries()) << info.cluster_shift;
+        let virt_l1_base = (i * info.l2_entries()) << info.cluster_bits();
 
         if arg.l2_idx >= 0 && (i != arg.l2_idx as usize) {
             continue;
@@ -174,7 +174,7 @@ fn dump_l1_table(
                 let e = l2.get(j);
 
                 let ol = match e.is_compressed() {
-                    true => match e.compressed_range(info.cluster_shift.into()) {
+                    true => match e.compressed_range(info.cluster_bits().try_into().unwrap()) {
                         Some(v) => v,
                         _ => (u64::MAX, 0),
                     },
@@ -184,7 +184,7 @@ fn dump_l1_table(
                 if e.cluster_offset() != 0 {
                     println!(
                         "\t virt_addr 0x{:<16x} idx {:<4} entry {:<x} off 0x{:<16x} len {:<5} compressed {} copied {}",
-                        virt_l1_base + (j << info.cluster_shift),
+                        virt_l1_base + (j << info.cluster_bits()),
                         j,
                         e.into_plain(),
                         ol.0, ol.1,
@@ -238,7 +238,7 @@ fn dump_refcount_table(
         }
         if !e.is_zero() {
             let offset = e.refblock_offset();
-            let mut rc_b = RefBlock::new(info.refcount_order, info.cluster_size(), Some(offset));
+            let mut rc_b = RefBlock::new(info.refcount_order(), info.cluster_size(), Some(offset));
             let rc_b_buf =
                 unsafe { std::slice::from_raw_parts_mut(rc_b.as_mut_ptr(), rc_b.byte_size()) };
             assert!(rc_b_buf.as_ptr() == rc_b.as_ptr());
@@ -255,8 +255,8 @@ fn dump_refcount_table(
             for j in 0..rc_b.entries() {
                 let e = rc_b.get(j);
 
-                let mut off = (info.rb_entries() as u64 * i as u64) << info.cluster_shift;
-                off += (j as u64) << info.cluster_shift;
+                let mut off = (info.rb_entries() as u64 * i as u64) << info.cluster_bits();
+                off += (j as u64) << info.cluster_bits();
 
                 if !e.is_zero() {
                     println!(
@@ -413,7 +413,8 @@ fn map_qcow2(args: MapArgs) -> Qcow2Result<()> {
     rt.block_on(async move {
         let p = qcow2_rs::qcow2_default_params!(false, false);
         let dev = qcow2_setup_dev_tokio(&args.file, &p).await.unwrap();
-        let mut start = args.addr & !dev.info.in_cluster_offset_mask as u64;
+        let cls_bits = dev.info.cluster_bits();
+        let mut start = args.addr & (!((1 << cls_bits) - 1) as u64);
 
         let mut i = 0;
         while i < args.len && start < dev.info.virtual_size() {
