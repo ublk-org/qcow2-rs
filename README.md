@@ -20,6 +20,9 @@ slice size is block size, and the maximized size is cluster size
 - block device like interface, minimized read/write unit is aligned with
 block size of the FS qcow2 image
 
+- cross-platform support, verified on linux(Fedora/ubuntu), freebsd, macos
+and windows
+
 This project is based on qcow2 implementation from `rsd`[^1]
 
 Motivation of this project is for supporting ublk-qcow2[^4], but turns out it
@@ -62,6 +65,8 @@ host cluster leak, format qcow2 image, ....
 - for running the built-in test, `qemu-img` is required, so package of
 `qemu-utils`(Debian/Ubuntu) or `qemu-img`(Fedora, RHEL, ...) needs to
 be installed
+
+- built CI covers 'carget test' on both ubuntu and windows
 
 
 ## License
