@@ -374,26 +374,27 @@ fn dump_qcow2(args: DumpArgs) -> Qcow2Result<()> {
     Ok(())
 }
 
+fn __format_qcow2_buf(size: u64, cluster_bits: usize, refcount_order: u8, bs: usize) -> Vec<u8> {
+    let (rc_t, rc_b, _) =
+        Qcow2Header::calculate_meta_params(size, cluster_bits, refcount_order, bs);
+    let clusters = 1 + rc_t.1 + rc_b.1;
+
+    // just zero the 1st 512 sector of l1 table
+    let img_size = ((clusters as usize) << cluster_bits) + bs;
+    let mut buf = vec![0_u8; img_size];
+
+    Qcow2Header::format_qcow2(&mut buf, size, cluster_bits, refcount_order, bs).unwrap();
+
+    buf
+}
+
 fn format_qcow2(args: FormatArgs) -> Qcow2Result<()> {
     let size = (args.size as u64) << 20;
     let cluster_bits = args.cluster_bits;
     let refcount_order = args.refcount_order;
     let bs = 512;
 
-    //println!("{:?}", args);
-
-    let (rc_t, rc_b, _) =
-        Qcow2Header::calculate_meta_params(size, cluster_bits, refcount_order, bs);
-    //println!("{:?} {:?} {:?}", rc_t, rc_b, l1_t);
-
-    let clusters = 1 + rc_t.1 + rc_b.1;
-
-    // just zero the 1st 512 sector of l1 table
-    let img_size = ((clusters as usize) << cluster_bits) + 512;
-    let mut buf = vec![0_u8; img_size];
-
-    Qcow2Header::format_qcow2(&mut buf, size, cluster_bits, refcount_order, bs).unwrap();
-
+    let mut buf = __format_qcow2_buf(size, cluster_bits, refcount_order, bs);
     {
         let mut f = std::fs::OpenOptions::new()
             .read(true)
