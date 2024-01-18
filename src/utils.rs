@@ -8,7 +8,7 @@ use crate::sync_io::Qcow2IoSync;
 #[cfg(target_os = "linux")]
 use crate::uring::Qcow2IoUring;
 use async_recursion::async_recursion;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[macro_export]
 macro_rules! qcow2_default_params {
@@ -46,10 +46,7 @@ pub fn qcow2_alloc_dev_sync<T: Qcow2IoOps>(
             Qcow2Header::from_buf(&buf)?
         }
     };
-    let back_path = match header.backing_filename() {
-        None => None,
-        Some(s) => Some(PathBuf::from(s.clone())),
-    };
+    let back_path = header.backing_filename().map(|s| PathBuf::from(s.clone()));
 
     Ok((
         Qcow2Dev::new(path, header, params, io).expect("new dev failed"),
@@ -60,7 +57,7 @@ pub fn qcow2_alloc_dev_sync<T: Qcow2IoOps>(
 /// Allocate one qcow2 device and qcow2 header needs to be parsed
 /// for allocating the device.
 pub async fn qcow2_alloc_dev<T: Qcow2IoOps>(
-    path: &PathBuf,
+    path: &Path,
     io: T,
     params: &Qcow2DevParams,
 ) -> Qcow2Result<(Qcow2Dev<T>, Option<PathBuf>)> {
@@ -77,10 +74,7 @@ pub async fn qcow2_alloc_dev<T: Qcow2IoOps>(
             Qcow2Header::from_buf(&buf)?
         }
     };
-    let back_path = match header.backing_filename() {
-        None => None,
-        Some(s) => Some(PathBuf::from(s.clone())),
-    };
+    let back_path = header.backing_filename().map(|s| PathBuf::from(s.clone()));
 
     Ok((
         Qcow2Dev::new(path, header, params, io).expect("new dev failed"),

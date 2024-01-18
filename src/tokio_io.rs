@@ -5,7 +5,7 @@ use crate::ops::*;
 use nix::fcntl::{fallocate, FallocateFlags};
 #[cfg(target_os = "linux")]
 use std::os::fd::AsRawFd;
-use std::path::PathBuf;
+use std::path::Path;
 use tokio::fs::{File, OpenOptions};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, SeekFrom};
 
@@ -24,11 +24,11 @@ pub struct Qcow2IoTokio {
 
 impl Qcow2IoTokio {
     #[cfg(target_os = "linux")]
-    pub async fn new(path: &PathBuf, ro: bool, dio: bool) -> Qcow2IoTokio {
+    pub async fn new(path: &Path, ro: bool, dio: bool) -> Qcow2IoTokio {
         let file = OpenOptions::new()
             .read(true)
             .write(!ro)
-            .open(path.clone())
+            .open(path.to_path_buf())
             .await
             .unwrap();
 
@@ -42,11 +42,11 @@ impl Qcow2IoTokio {
     }
 
     #[cfg(not(target_os = "linux"))]
-    pub async fn new(path: &PathBuf, ro: bool, dio: bool) -> Qcow2IoTokio {
+    pub async fn new(path: &Path, ro: bool, dio: bool) -> Qcow2IoTokio {
         let file = OpenOptions::new()
             .read(true)
             .write(!ro)
-            .open(path.clone())
+            .open(path.to_path_buf())
             .await
             .unwrap();
 
@@ -92,8 +92,7 @@ impl Qcow2IoOps for Qcow2IoTokio {
             FallocateFlags::FALLOC_FL_PUNCH_HOLE
         };
 
-        let res = fallocate(self.fd, f, offset as i64, len as i64)?;
-        Ok(res)
+        Ok(fallocate(self.fd, f, offset as i64, len as i64)?)
     }
     #[cfg(not(target_os = "linux"))]
     async fn fallocate(&self, offset: u64, len: usize, _flags: u32) -> Qcow2Result<()> {

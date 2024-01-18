@@ -492,7 +492,7 @@ impl Qcow2Header {
 
             ext_offset += size_of::<Qcow2HeaderExtensionHeader>() as u64;
 
-            let ext_hdr: Qcow2HeaderExtensionHeader = bincode.deserialize(&ext_hdr_buf)?;
+            let ext_hdr: Qcow2HeaderExtensionHeader = bincode.deserialize(ext_hdr_buf)?;
             let max_len = ext_offset + ext_hdr.length as u64;
             if max_len > cluster_size || max_len > header_buf.len() as u64 {
                 return Err("Header extensions exceed the first cluster or buffer length".into());
@@ -564,7 +564,7 @@ impl Qcow2Header {
 
         let l1_table_offset = rc_block_offset + cluster_size as u64;
         let l1_table_entries = Qcow2Info::get_max_l1_entries(size, cluster_bits);
-        let l1_table_size = Qcow2Info::__max_l1_size(l1_table_entries, block_size) as usize;
+        let l1_table_size = Qcow2Info::__max_l1_size(l1_table_entries, block_size);
         let l1_table_clusters = (l1_table_size + cluster_size - 1) / cluster_size;
 
         let rc_table = (rc_table_offset, rc_table_clusters as u32);
@@ -660,7 +660,7 @@ impl Qcow2Header {
             l1_table_offset: l1_table.0,
             l1_size: 2,
             refcount_table_offset: rc_table.0,
-            refcount_table_clusters: rc_table.1 as u32,
+            refcount_table_clusters: rc_table.1,
             ..Default::default()
         };
 
@@ -1612,7 +1612,7 @@ impl RefBlock {
     }
 
     pub fn set_refcount_order(&mut self, refcount_order: u8) {
-        self.refcount_order = refcount_order as u8;
+        self.refcount_order = refcount_order;
     }
 
     #[inline(always)]
@@ -1892,7 +1892,7 @@ pub trait Table: From<Qcow2IoBuf<Self::Entry>> {
     }
 
     fn is_update(&self) -> bool {
-        self.get_offset() != None
+        self.get_offset().is_some()
     }
 
     fn new_empty(offset: Option<u64>, size: usize) -> Self {

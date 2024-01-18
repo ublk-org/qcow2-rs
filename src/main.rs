@@ -9,6 +9,7 @@ use qcow2_rs::meta::{
 use qcow2_rs::ops::Qcow2IoOps;
 use qcow2_rs::utils::qcow2_setup_dev_tokio;
 use std::io::{Read, Seek, SeekFrom, Write};
+use std::path::Path;
 use std::path::PathBuf;
 use tokio::runtime::Runtime;
 
@@ -414,7 +415,7 @@ fn format_qcow2(args: FormatArgs) -> Qcow2Result<()> {
     let refcount_order = args.refcount_order;
     let bs = 512;
 
-    let mut buf = __format_qcow2_buf(size, cluster_bits, refcount_order, bs);
+    let buf = __format_qcow2_buf(size, cluster_bits, refcount_order, bs);
     {
         let mut f = std::fs::OpenOptions::new()
             .read(true)
@@ -422,7 +423,7 @@ fn format_qcow2(args: FormatArgs) -> Qcow2Result<()> {
             .create(true)
             .open(&args.file)
             .unwrap();
-        let res = f.write(&mut buf).unwrap();
+        let res = f.write(&buf).unwrap();
 
         assert!(res == buf.len());
     }
@@ -579,22 +580,19 @@ async fn copy_to_qcow2<T: Qcow2IoOps>(
     src.seek(SeekFrom::Start(off))?;
     let _ = src.read(&mut buf)?;
 
-    let _ = dev.write_at(&buf, off).await?;
+    dev.write_at(&buf, off).await?;
     Ok(())
 }
 
-async fn convert_from_qcow2_dev<T: Qcow2IoOps>(
-    dev: &Qcow2Dev<T>,
-    raw: &PathBuf,
-) -> Qcow2Result<()> {
-    let mut file = std::fs::File::create(raw.clone()).unwrap();
+async fn convert_from_qcow2_dev<T: Qcow2IoOps>(dev: &Qcow2Dev<T>, raw: &Path) -> Qcow2Result<()> {
+    let mut file = std::fs::File::create(raw).unwrap();
     let mut off: u64 = 0;
     let buf_size = 64 << 20;
     let total = dev.info.virtual_size();
     while off < total {
         let len = std::cmp::min(buf_size, total - off);
 
-        copy_from_qcow2(&dev, &mut file, off, len as usize)
+        copy_from_qcow2(dev, &mut file, off, len as usize)
             .await
             .unwrap();
 
@@ -604,16 +602,19 @@ async fn convert_from_qcow2_dev<T: Qcow2IoOps>(
     Ok(())
 }
 
-async fn convert_to_qcow2_dev<T: Qcow2IoOps>(raw: &PathBuf, dev: &Qcow2Dev<T>) -> Qcow2Result<()> {
+async fn convert_to_qcow2_dev<T: Qcow2IoOps>(raw: &Path, dev: &Qcow2Dev<T>) -> Qcow2Result<()> {
     let file_orig_size = std::fs::metadata(raw).unwrap().len();
-    let mut file = std::fs::OpenOptions::new().read(true).open(raw).unwrap();
+    let mut file = std::fs::OpenOptions::new()
+        .read(true)
+        .open(raw.to_path_buf())
+        .unwrap();
 
     let mut off: u64 = 0;
     let buf_size = 64 << 20;
     let total = file_orig_size;
     while off < total {
         let len = std::cmp::min(buf_size, total - off);
-        copy_to_qcow2(&dev, &mut file, off, len as usize)
+        copy_to_qcow2(dev, &mut file, off, len as usize)
             .await
             .unwrap();
         off += len;
@@ -623,7 +624,7 @@ async fn convert_to_qcow2_dev<T: Qcow2IoOps>(raw: &PathBuf, dev: &Qcow2Dev<T>) -
     Ok(())
 }
 
-fn convert_to_qcow2_prep(raw: &PathBuf, qcow2: &PathBuf) -> Qcow2Result<()> {
+fn convert_to_qcow2_prep(raw: &Path, qcow2: &PathBuf) -> Qcow2Result<()> {
     let cluster_bits = 16;
     let cluster_size = 1 << cluster_bits;
     let file_orig_size = std::fs::metadata(raw).unwrap().len();
@@ -643,7 +644,7 @@ fn convert_to_qcow2_prep(raw: &PathBuf, qcow2: &PathBuf) -> Qcow2Result<()> {
 }
 
 #[cfg(not(target_os = "linux"))]
-fn convert_from_qcow2(qcow2: &PathBuf, raw: &PathBuf) -> Qcow2Result<()> {
+fn convert_from_qcow2(qcow2: &PathBuf, raw: &Path) -> Qcow2Result<()> {
     let rt = tokio::runtime::Runtime::new().unwrap();
 
     rt.block_on(async {
@@ -657,7 +658,7 @@ fn convert_from_qcow2(qcow2: &PathBuf, raw: &PathBuf) -> Qcow2Result<()> {
 }
 
 #[cfg(target_os = "linux")]
-fn convert_from_qcow2(qcow2: &PathBuf, raw: &PathBuf) -> Qcow2Result<()> {
+fn convert_from_qcow2(qcow2: &PathBuf, raw: &Path) -> Qcow2Result<()> {
     tokio_uring::start(async {
         let p = qcow2_rs::qcow2_default_params!(false, true);
         let dev = qcow2_rs::utils::qcow2_setup_dev_uring(qcow2, &p)
@@ -670,7 +671,7 @@ fn convert_from_qcow2(qcow2: &PathBuf, raw: &PathBuf) -> Qcow2Result<()> {
 }
 
 #[cfg(not(target_os = "linux"))]
-fn convert_to_qcow2(raw: &PathBuf, qcow2: &PathBuf) -> Qcow2Result<()> {
+fn convert_to_qcow2(raw: &Path, qcow2: &PathBuf) -> Qcow2Result<()> {
     convert_to_qcow2_prep(raw, qcow2)?;
     let rt = tokio::runtime::Runtime::new().unwrap();
 
@@ -685,7 +686,7 @@ fn convert_to_qcow2(raw: &PathBuf, qcow2: &PathBuf) -> Qcow2Result<()> {
 }
 
 #[cfg(target_os = "linux")]
-fn convert_to_qcow2(raw: &PathBuf, qcow2: &PathBuf) -> Qcow2Result<()> {
+fn convert_to_qcow2(raw: &Path, qcow2: &PathBuf) -> Qcow2Result<()> {
     convert_to_qcow2_prep(raw, qcow2)?;
 
     tokio_uring::start(async {
@@ -703,7 +704,7 @@ fn __convert_qcow2(args: ConvertArgs) -> Qcow2Result<()> {
     let in_fmt = &args.fmt;
     let out_fmt = &args.output_fmt;
 
-    if &args.file == &args.output_file {
+    if args.file == args.output_file {
         return Err("input and output point to same file".into());
     }
 

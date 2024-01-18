@@ -7,7 +7,7 @@ use nix::fcntl::{fallocate, FallocateFlags};
 use std::cell::RefCell;
 use std::fs::{File, OpenOptions};
 use std::os::unix::io::AsRawFd;
-use std::path::PathBuf;
+use std::path::Path;
 
 #[derive(Debug)]
 pub struct Qcow2IoSync {
@@ -16,7 +16,7 @@ pub struct Qcow2IoSync {
 }
 
 impl Qcow2IoSync {
-    pub fn new(path: &PathBuf, ro: bool, dio: bool) -> Qcow2IoSync {
+    pub fn new(path: &Path, ro: bool, dio: bool) -> Qcow2IoSync {
         #[cfg(target_os = "macos")]
         fn set_dio(_file: &File) {}
 
@@ -27,11 +27,7 @@ impl Qcow2IoSync {
             }
         }
 
-        let file = OpenOptions::new()
-            .read(true)
-            .write(!ro)
-            .open(path.clone())
-            .unwrap();
+        let file = OpenOptions::new().read(true).write(!ro).open(path).unwrap();
 
         if dio {
             set_dio(&file);
@@ -56,7 +52,7 @@ impl Qcow2IoSync {
         };
 
         if res < 0 {
-            return Err("libc::pread failed".into());
+            Err("libc::pread failed".into())
         } else {
             if (res as usize) != buf.len() {
                 eprintln!(
@@ -66,7 +62,7 @@ impl Qcow2IoSync {
                     offset
                 );
             }
-            return Ok(res as usize);
+            Ok(res as usize)
         }
     }
 
@@ -82,7 +78,7 @@ impl Qcow2IoSync {
         };
 
         if res < 0 {
-            return Err("libc::pwrite failed".into());
+            Err("libc::pwrite failed".into())
         } else {
             if (res as usize) != buf.len() {
                 eprintln!(
@@ -92,7 +88,7 @@ impl Qcow2IoSync {
                     offset
                 );
             }
-            return Ok(());
+            Ok(())
         }
     }
 }
@@ -115,8 +111,7 @@ impl Qcow2IoOps for Qcow2IoSync {
             FallocateFlags::FALLOC_FL_PUNCH_HOLE
         };
 
-        let res = fallocate(self.fd, f, offset as i64, len as i64)?;
-        Ok(res)
+        Ok(fallocate(self.fd, f, offset as i64, len as i64)?)
     }
     #[cfg(not(target_os = "linux"))]
     async fn fallocate(&self, offset: u64, len: usize, _flags: u32) -> Qcow2Result<()> {
@@ -128,9 +123,7 @@ impl Qcow2IoOps for Qcow2IoSync {
 
     #[cfg(not(target_os = "windows"))]
     async fn fsync(&self, _offset: u64, _len: usize, _flags: u32) -> Qcow2Result<()> {
-        let res = nix::unistd::fsync(self.fd)?;
-
-        Ok(res)
+        Ok(nix::unistd::fsync(self.fd)?)
     }
     #[cfg(target_os = "windows")]
     async fn fsync(&self, _offset: u64, _len: usize, _flags: u32) -> Qcow2Result<()> {

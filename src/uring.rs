@@ -5,7 +5,7 @@ use crate::ops::*;
 use async_trait::async_trait;
 use nix::fcntl::{fallocate, FallocateFlags};
 use std::os::unix::io::AsRawFd;
-use std::path::PathBuf;
+use std::path::Path;
 use tokio_uring::fs::{File, OpenOptions};
 
 #[derive(Debug)]
@@ -14,11 +14,11 @@ pub struct Qcow2IoUring {
 }
 
 impl Qcow2IoUring {
-    pub async fn new(path: &PathBuf, ro: bool, dio: bool) -> Qcow2IoUring {
+    pub async fn new(path: &Path, ro: bool, dio: bool) -> Qcow2IoUring {
         let file = OpenOptions::new()
             .read(true)
             .write(!ro)
-            .open(path.clone())
+            .open(path.to_path_buf())
             .await
             .unwrap();
 
@@ -76,9 +76,13 @@ impl Qcow2IoOps for Qcow2IoUring {
         } else {
             FallocateFlags::FALLOC_FL_PUNCH_HOLE
         };
-        let res = fallocate(self.file.as_raw_fd(), f, offset as i64, len as i64)?;
 
-        Ok(res)
+        Ok(fallocate(
+            self.file.as_raw_fd(),
+            f,
+            offset as i64,
+            len as i64,
+        )?)
     }
 
     async fn fsync(&self, _offset: u64, _len: usize, _flags: u32) -> Qcow2Result<()> {

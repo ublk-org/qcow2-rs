@@ -16,6 +16,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::mem::size_of;
 use std::ops::RangeInclusive;
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
@@ -222,7 +223,7 @@ impl Qcow2Info {
         let rc_table_size =
             ((rc_table_entries as usize * std::mem::size_of::<u64>()) + bs - 1) & !(bs - 1);
 
-        std::cmp::min(rc_table_size as usize, 8usize << 20)
+        std::cmp::min(rc_table_size, 8usize << 20)
     }
 
     #[inline(always)]
@@ -360,10 +361,7 @@ impl Qcow2DevParams {
     }
 
     pub fn is_backing_dev(&self) -> bool {
-        match *self.backing.borrow() {
-            None => false,
-            Some(_) => true,
-        }
+        (*self.backing.borrow()).is_some()
     }
 }
 
@@ -408,13 +406,13 @@ impl<T> std::fmt::Debug for Qcow2Dev<T> {
             Some(b) => write!(f, "backing {:?}", b),
             _ => write!(f, "backing None"),
         };
-        write!(f, "\n")
+        writeln!(f)
     }
 }
 
 impl<T: Qcow2IoOps> Qcow2Dev<T> {
     pub fn new(
-        path: &PathBuf,
+        path: &Path,
         header: Qcow2Header,
         params: &Qcow2DevParams,
         file: T,
@@ -422,8 +420,8 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         let h = &header;
         let bs_shift = params.get_bs_bits();
 
-        debug_assert!(bs_shift >= 9 && bs_shift <= 12);
-        let info = Qcow2Info::new(&h, params)?;
+        debug_assert!((9..=12).contains(&bs_shift));
+        let info = Qcow2Info::new(h, params)?;
 
         let l2_cache_cnt = info.l2_cache_cnt as usize;
         let rb_cache_cnt = info.rb_cache_cnt as usize;
@@ -443,7 +441,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         );
 
         let dev = Qcow2Dev {
-            path: path.clone(),
+            path: path.to_path_buf(),
             header: AsyncRwLock::new(header),
             file,
             backing_file: None,
@@ -527,8 +525,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
 
         t.set_offset(Some(off));
         let buf = unsafe { std::slice::from_raw_parts_mut(t.as_mut_ptr(), t.byte_size()) };
-        let size = self.call_read(off, buf).await?;
-        Ok(size as usize)
+        self.call_read(off, buf).await
     }
 
     async fn load_refcount_table(&self) -> Qcow2Result<usize> {
@@ -676,30 +673,28 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
                         Some(cache_off) => {
                             let key = cache_off >> info.cluster_bits();
 
-                            if !cluster_map.contains_key(&key) {
-                                if self.cluster_is_new(key).await {
-                                    let cls_map = self.new_cluster.read().await;
-                                    // keep this cluster locked, so that concurrent discard can
-                                    // be avoided
-                                    let mut locked_cls = cls_map.get(&key).unwrap().write().await;
+                            if !cluster_map.contains_key(&key) && self.cluster_is_new(key).await {
+                                let cls_map = self.new_cluster.read().await;
+                                // keep this cluster locked, so that concurrent discard can
+                                // be avoided
+                                let mut locked_cls = cls_map.get(&key).unwrap().write().await;
 
-                                    log::debug!(
-                                        "flush_cache_entries: discard cluster {:x} done {}",
-                                        cache_off & !((1 << info.cluster_bits()) - 1),
-                                        *locked_cls
-                                    );
-                                    if *locked_cls == false {
-                                        // mark it as discarded, so others can observe it after
-                                        // grabbing write lock
-                                        *locked_cls = true;
-                                        if cls_map.contains_key(&key) {
-                                            f_vec.push(self.call_fallocate(
-                                                cache_off & !((1 << info.cluster_bits()) - 1),
-                                                1 << info.cluster_bits(),
-                                                Qcow2OpsFlags::FALLOCATE_ZERO_RAGE,
-                                            ));
-                                            cluster_map.insert(key, locked_cls);
-                                        }
+                                log::debug!(
+                                    "flush_cache_entries: discard cluster {:x} done {}",
+                                    cache_off & !((1 << info.cluster_bits()) - 1),
+                                    *locked_cls
+                                );
+                                if !(*locked_cls) {
+                                    // mark it as discarded, so others can observe it after
+                                    // grabbing write lock
+                                    *locked_cls = true;
+                                    if cls_map.contains_key(&key) {
+                                        f_vec.push(self.call_fallocate(
+                                            cache_off & !((1 << info.cluster_bits()) - 1),
+                                            1 << info.cluster_bits(),
+                                            Qcow2OpsFlags::FALLOCATE_ZERO_RAGE,
+                                        ));
+                                        cluster_map.insert(key, locked_cls);
                                     }
                                 }
                             }
@@ -804,15 +799,10 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
     }
 
     async fn flush_top_table<B: Table>(&self, rt: &B) -> Qcow2Result<()> {
-        loop {
-            match rt.pop_dirty_blk_idx(None) {
-                Some(idx) => {
-                    let start = idx << self.info.block_size_shift;
-                    let size = 1 << self.info.block_size_shift;
-                    self.flush_table(rt, start, size).await?
-                }
-                None => break,
-            }
+        while let Some(idx) = rt.pop_dirty_blk_idx(None) {
+            let start = idx << self.info.block_size_shift;
+            let size = 1 << self.info.block_size_shift;
+            self.flush_table(rt, start, size).await?
         }
 
         Ok(())
@@ -833,18 +823,18 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
             let start = key_fn((idx as u64) << bs_bits);
             let end = key_fn(((idx + 1) as u64) << bs_bits);
 
-            if self.flush_cache(&cache, start, end).await? {
+            if self.flush_cache(cache, start, end).await? {
                 // order cache flush and the upper layer table
                 self.call_fsync(0, usize::MAX, 0).await?;
             }
             self.flush_table(rt, idx << bs_bits, 1 << bs_bits).await?;
-            return Ok(false);
+            Ok(false)
         } else {
             // flush cache without holding top table read lock
-            if self.flush_cache(&cache, 0, usize::MAX).await? {
+            if self.flush_cache(cache, 0, usize::MAX).await? {
                 self.call_fsync(0, usize::MAX, 0).await?;
             }
-            return Ok(true);
+            Ok(true)
         }
     }
 
@@ -963,9 +953,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         let rb = self.flush_table(&new_refblock, 0, new_refblock.byte_size());
         let rb_after = self.call_fallocate(
             refblock_offset + rb_size as u64,
-            (cls.rb_slice_host_end(info) as usize - refblock_offset as usize - rb_size)
-                .try_into()
-                .unwrap(),
+            cls.rb_slice_host_end(info) as usize - refblock_offset as usize - rb_size,
             Qcow2OpsFlags::FALLOCATE_ZERO_RAGE,
         );
         let (res0, res1, res2) = futures::join!(rb_before, rb, rb_after);
@@ -1259,7 +1247,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
             return Ok(None);
         }
 
-        let rb_handle = self.get_refblock(&cls, &rt_e).await?;
+        let rb_handle = self.get_refblock(cls, rt_e).await?;
         let mut rb = rb_handle.value().write().await;
 
         match rb.get_free_range(rb_slice_index, count) {
@@ -1389,7 +1377,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         rt_e: &RefTableEntry,
         cls: &HostCluster,
     ) -> Qcow2Result<usize> {
-        let rb_h = self.get_refblock(&cls, &rt_e).await?;
+        let rb_h = self.get_refblock(cls, rt_e).await?;
         let rb = rb_h.value().write().await;
         let mut total = 0;
 
@@ -1805,7 +1793,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
     /// for fill up l1 entry
     async fn ensure_l2_offset(&self, split: &SplitGuestOffset) -> Qcow2Result<L1Entry> {
         let info = &self.info;
-        let l1_entry = self.get_l1_entry(&split).await?;
+        let l1_entry = self.get_l1_entry(split).await?;
         if !l1_entry.is_zero() {
             return Ok(l1_entry);
         }
@@ -1831,7 +1819,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
                         log::info!("ensure_l2_offset: write new allocated l1 table");
                         self.flush_meta().await?;
                         new_l1_table.set_offset(Some(res.0));
-                        self.flush_top_table(&mut new_l1_table).await?;
+                        self.flush_top_table(&new_l1_table).await?;
 
                         self.flush_header_for_l1_table(res.0, new_l1_table.entries())
                             .await?;
@@ -1962,7 +1950,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
                 // the whole cluster is copied to top image with this write
                 // lock covered, so any concurrent write has to be started
                 // after the copy is done
-                if *lock == false {
+                if !(*lock) {
                     *lock = true;
 
                     discard = Some(self.call_fallocate(host_off, info.cluster_size(), 0));
@@ -1978,10 +1966,9 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         };
 
         if let Some(lock) = cluster_lock {
-            match discard {
-                Some(df) => df.await?,
-                None => {}
-            };
+            if let Some(df) = discard {
+                df.await?
+            }
 
             let cow_res = match cow_mapping {
                 None => Ok(()),
@@ -2137,9 +2124,9 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
                     .await;
 
                 let _ = l2_table.map_cluster(split.l2_slice_index(info), l2_offset);
-                Ok(l2_table.get_mapping(info, &split))
+                Ok(l2_table.get_mapping(info, split))
             }
-            None => return Err("DataFile mapping: None offset None".into()),
+            None => Err("DataFile mapping: None offset None".into()),
         }
     }
 
@@ -2178,7 +2165,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
             return false;
         }
 
-        return true;
+        true
     }
 
     /// return how many l2 entries stored in `l2_entries`
@@ -2532,7 +2519,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
             let h = self.header.read().await;
             let l1_size = (self.l1table.read().await.byte_size() + cls_size - 1) & !(cls_size - 1);
 
-            h.l1_table_offset()..((h.l1_table_offset() + l1_size as u64) as u64)
+            h.l1_table_offset()..(h.l1_table_offset() + l1_size as u64)
         };
 
         for c in l1_range {
@@ -2556,15 +2543,14 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
 
             match mapping.source {
                 MappingSource::Zero | MappingSource::Unallocated | MappingSource::Backing => {}
-                MappingSource::DataFile => match mapping.cluster_offset {
-                    Some(off) => {
+                MappingSource::DataFile => {
+                    if let Some(off) = mapping.cluster_offset {
                         allocated += 1;
                         Self::add_used_cluster_to_set(ranges, off >> self.info.cluster_bits());
                     }
-                    _ => {}
-                },
-                MappingSource::Compressed => match mapping.cluster_offset {
-                    Some(off) => {
+                }
+                MappingSource::Compressed => {
+                    if let Some(off) = mapping.cluster_offset {
                         let start = off >> info.cluster_bits();
                         let end = (off + (mapping.compressed_length.unwrap() as u64))
                             >> info.cluster_bits();
@@ -2574,8 +2560,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
                         allocated += 1;
                         compressed += 1;
                     }
-                    _ => {}
-                },
+                }
             }
         }
         Ok((allocated, compressed))
@@ -2587,7 +2572,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
                 return true;
             }
         }
-        return false;
+        false
     }
 
     /// Return Host Cluster usage, such as, allocated clusters, how many of them

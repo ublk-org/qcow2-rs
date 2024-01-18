@@ -80,7 +80,7 @@ impl<K: Clone + PartialEq + Eq + Hash + std::fmt::Debug + std::cmp::PartialOrd, 
             r.insert(key, value);
         }
 
-        if vec.len() == 0 {
+        if vec.is_empty() {
             None
         } else {
             log::debug!(
@@ -108,7 +108,7 @@ impl<K: Clone + PartialEq + Eq + Hash + std::fmt::Debug + std::cmp::PartialOrd, 
     pub(crate) fn get(&self, key: K) -> Option<AsyncLruCacheEntry<V>> {
         let map = self.rmap.read().unwrap();
         if let Some(entry) = map.get(&key) {
-            self.update_lru(&entry);
+            self.update_lru(entry);
             Some(Arc::clone(entry))
         } else {
             None
@@ -127,7 +127,7 @@ impl<K: Clone + PartialEq + Eq + Hash + std::fmt::Debug + std::cmp::PartialOrd, 
 
         for (key, value) in map.iter() {
             let k = key.clone();
-            if Arc::strong_count(&value) <= 1 && !value.is_dirty() {
+            if Arc::strong_count(value) <= 1 && !value.is_dirty() {
                 k_vec.push(k);
             }
         }

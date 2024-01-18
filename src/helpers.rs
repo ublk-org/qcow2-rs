@@ -94,7 +94,7 @@ pub struct Qcow2IoBuf<T> {
 unsafe impl<T> Send for Qcow2IoBuf<T> {}
 unsafe impl<T> Sync for Qcow2IoBuf<T> {}
 
-impl<'a, T> Qcow2IoBuf<T> {
+impl<T> Qcow2IoBuf<T> {
     pub fn new(size: usize) -> Self {
         let layout = std::alloc::Layout::from_size_align(size, 4096).unwrap();
         let ptr = unsafe { std::alloc::alloc(layout) } as *mut T;
@@ -105,6 +105,7 @@ impl<'a, T> Qcow2IoBuf<T> {
     }
 
     /// how many elements in this buffer
+    #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> usize {
         let elem_size = core::mem::size_of::<T>();
         self.size / elem_size
@@ -194,5 +195,5 @@ macro_rules! zero_buf {
 }
 
 pub fn qcow2_type_of<T>(_: &T) -> String {
-    format!("{}", std::any::type_name::<T>())
+    std::any::type_name::<T>().to_string()
 }
