@@ -142,7 +142,7 @@ mod tests {
     }
 
     #[test]
-    #[rustversion::attr(since(1.75), allow(invalid_from_utf8))]
+    #[rustversion::attr(since(1.74), allow(invalid_from_utf8))]
     fn test_qcow2_error_from_utf8_error() {
         let bytes = [0x80, 0x80];
         if let Err(e) = std::str::from_utf8(&bytes) {

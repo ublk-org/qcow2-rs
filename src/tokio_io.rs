@@ -1,6 +1,8 @@
 // This crate belongs to binary utility of `qcow2`
 use crate::error::Qcow2Result;
 use crate::ops::*;
+#[rustversion::before(1.75)]
+use async_trait::async_trait;
 #[cfg(target_os = "linux")]
 use nix::fcntl::{fallocate, FallocateFlags};
 #[cfg(target_os = "linux")]
