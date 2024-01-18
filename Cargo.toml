@@ -10,8 +10,7 @@ repository = "https://github.com/ming1/qcow2-rs.git"
 license = "MIT OR Apache-2.0"
 keywords = ["io_uring", "qcow2", "qemu", "disk", "async"]
 categories = [ "asynchronous", "filesystem" ]
-
-publish = false
+publish = true
 
 [[bin]]
 name = "qcow2"
