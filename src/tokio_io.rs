@@ -61,7 +61,9 @@ impl Qcow2IoTokio {
         let mut file = self.file.lock().await;
 
         file.seek(SeekFrom::Start(offset)).await?;
-        file.write(buf).await?;
+        let res = file.write(buf).await?;
+
+        assert!(res == buf.len());
 
         Ok(())
     }

@@ -34,7 +34,7 @@ pub fn qcow2_alloc_dev_sync<T: Qcow2IoOps>(
         use std::io::Read;
         let mut buf = Qcow2IoBuf::<u8>::new(bytes);
         let mut file = std::fs::File::open(path).unwrap();
-        file.read(&mut buf).unwrap();
+        let _ = file.read(&mut buf).unwrap();
         Ok(buf)
     }
 

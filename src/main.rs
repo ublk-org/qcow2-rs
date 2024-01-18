@@ -359,7 +359,7 @@ fn __dump_header(f: &PathBuf, h: &Qcow2Header) {
 fn dump_header(p: &PathBuf) -> Qcow2Result<()> {
     let mut f = std::fs::OpenOptions::new().read(true).open(p).unwrap();
     let mut buf = vec![0_u8; 4096];
-    f.read(&mut buf).unwrap();
+    let _ = f.read(&mut buf).unwrap();
     let header = Qcow2Header::from_buf(&buf).unwrap();
 
     __dump_header(p, &header);
@@ -373,7 +373,7 @@ fn dump_qcow2(args: DumpArgs) -> Qcow2Result<()> {
         .open(&args.file)
         .unwrap();
     let mut buf = vec![0_u8; 4096];
-    f.read(&mut buf).unwrap();
+    let _ = f.read(&mut buf).unwrap();
 
     let p = qcow2_rs::qcow2_default_params!(true, true);
     let header = Qcow2Header::from_buf(&buf).unwrap();
@@ -422,7 +422,9 @@ fn format_qcow2(args: FormatArgs) -> Qcow2Result<()> {
             .create(true)
             .open(&args.file)
             .unwrap();
-        f.write(&mut buf).unwrap();
+        let res = f.write(&mut buf).unwrap();
+
+        assert!(res == buf.len());
     }
     dump_header(&args.file).unwrap();
 
@@ -555,10 +557,14 @@ async fn copy_from_qcow2<T: Qcow2IoOps>(
     bytes: usize,
 ) -> Qcow2Result<()> {
     let mut buf = Qcow2IoBuf::<u8>::new(bytes);
-    let _ = dev.read_at(&mut buf, off).await?;
+    let res = dev.read_at(&mut buf, off).await?;
+    assert!(res == bytes);
 
     dest.seek(SeekFrom::Start(off))?;
-    dest.write(&buf)?;
+    let res = dest.write(&buf)?;
+
+    assert!(res == bytes);
+
     Ok(())
 }
 
@@ -571,7 +577,7 @@ async fn copy_to_qcow2<T: Qcow2IoOps>(
     let mut buf = Qcow2IoBuf::<u8>::new(bytes);
 
     src.seek(SeekFrom::Start(off))?;
-    src.read(&mut buf)?;
+    let _ = src.read(&mut buf)?;
 
     let _ = dev.write_at(&buf, off).await?;
     Ok(())
@@ -629,7 +635,9 @@ fn convert_to_qcow2_prep(raw: &PathBuf, qcow2: &PathBuf) -> Qcow2Result<()> {
         .create(true)
         .open(qcow2)
         .unwrap();
-    f.write(&img_buf).unwrap();
+    let res = f.write(&img_buf).unwrap();
+
+    assert!(res == img_buf.len());
 
     Ok(())
 }
