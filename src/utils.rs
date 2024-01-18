@@ -26,11 +26,11 @@ const MAX_HEADER_SIZE: usize = 65536;
 /// Allocate one qcow2 device and qcow2 header needs to be parsed
 /// for allocating the device.
 pub fn qcow2_alloc_dev_sync<T: Qcow2IoOps>(
-    path: &PathBuf,
+    path: &Path,
     io: T,
     params: &Qcow2DevParams,
 ) -> Qcow2Result<(Qcow2Dev<T>, Option<PathBuf>)> {
-    fn read_header(path: &PathBuf, bytes: usize) -> Qcow2Result<Qcow2IoBuf<u8>> {
+    fn read_header(path: &Path, bytes: usize) -> Qcow2Result<Qcow2IoBuf<u8>> {
         use std::io::Read;
         let mut buf = Qcow2IoBuf::<u8>::new(bytes);
         let mut file = std::fs::File::open(path).unwrap();
@@ -90,7 +90,7 @@ macro_rules! qcow2_setup_dev_fn {
     ($type:ty, $fn_name: ident) => {
         #[async_recursion(?Send)]
         pub async fn $fn_name(
-            path: &PathBuf,
+            path: &Path,
             params: &Qcow2DevParams,
         ) -> Qcow2Result<Qcow2Dev<$type>> {
             let io = <$type>::new(path, params.is_read_only(), params.is_direct_io()).await;
@@ -99,7 +99,7 @@ macro_rules! qcow2_setup_dev_fn {
                 Some(back_path) => {
                     let p = params.clone();
                     p.mark_backing_dev(Some(true));
-                    let bdev = $fn_name(&back_path, &p).await?;
+                    let bdev = $fn_name(&back_path.as_path(), &p).await?;
                     dev.set_backing_dev(Box::new(bdev));
                 }
                 _ => {}
@@ -122,14 +122,14 @@ qcow2_setup_dev_fn!(crate::tokio_io::Qcow2IoTokio, qcow2_setup_dev_tokio);
 #[macro_export]
 macro_rules! qcow2_setup_dev_fn_sync {
     ($type:ty, $fn_name: ident) => {
-        pub fn $fn_name(path: &PathBuf, params: &Qcow2DevParams) -> Qcow2Result<Qcow2Dev<$type>> {
+        pub fn $fn_name(path: &Path, params: &Qcow2DevParams) -> Qcow2Result<Qcow2Dev<$type>> {
             let io = <$type>::new(path, params.is_read_only(), params.is_direct_io());
             let (mut dev, backing) = qcow2_alloc_dev_sync(&path, io, params)?;
             match backing {
                 Some(back_path) => {
                     let p = params.clone();
                     p.mark_backing_dev(Some(true));
-                    let bdev = $fn_name(&back_path, &p)?;
+                    let bdev = $fn_name(&back_path.as_path(), &p)?;
                     dev.set_backing_dev(Box::new(bdev));
                 }
                 _ => {}
