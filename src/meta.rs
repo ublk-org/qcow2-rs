@@ -650,6 +650,10 @@ impl Qcow2Header {
             libc::memset((buf_start + l1_table.0) as *mut libc::c_void, 0, block_size);
         }
 
+        let l2_entries = cluster_size / 8;
+        let size_per_l1_entry = (l2_entries << cluster_bits) as u64;
+        let l1_entries = (size + size_per_l1_entry - 1) / size_per_l1_entry;
+
         let mut h = Qcow2RawHeader {
             magic: Self::QCOW2_MAGIC,
             version: 3,
@@ -658,7 +662,7 @@ impl Qcow2Header {
             refcount_order: refcount_order as u32,
             header_length: 112,
             l1_table_offset: l1_table.0,
-            l1_size: 2,
+            l1_size: l1_entries.try_into().unwrap(),
             refcount_table_offset: rc_table.0,
             refcount_table_clusters: rc_table.1,
             ..Default::default()
