@@ -7,7 +7,7 @@ Library in qcow2-rs is for reading/writing data from qcow2 image, and
 follows its features:
 
 - async/await, support multiple io engines, verified on tokio-uring, raw
-linux sync IO syscall and io-uring[^3] with smol[^2] runtime
+linux sync IO syscall, tokio and io-uring[^3] with smol[^2] runtime
 
 - support both direct IO and buffered IO, for direct IO, it needs async
 runtime support, such as tokio doesn't allow it.
@@ -20,8 +20,7 @@ slice size is block size, and the maximized size is cluster size
 - block device like interface, minimized read/write unit is aligned with
 block size of the FS qcow2 image
 
-- cross-platform support, verified on linux(Fedora/ubuntu), freebsd, macos
-and windows
+- cross-platform support, verified on linux(Fedora/ubuntu), freebsd and windows
 
 This project is based on qcow2 implementation from `rsd`[^1]
 
@@ -32,7 +31,7 @@ improve, ...)
 
 One utility is included in this project, which can dump qcow2 meta,
 show any meta related statistics of the image, check image meta integrity &
-host cluster leak, format qcow2 image, ....
+host cluster leak, format qcow2 image and convert between qcow2 and raw.
 
 ## Example
 
