@@ -863,6 +863,26 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         Ok(())
     }
 
+    //// flush mapping cache
+    async fn flush_mapping(&self, l1: &L1Table) -> Qcow2Result<()> {
+        let info = &self.info;
+
+        loop {
+            let done = self
+                .flush_meta_generic(l1, &self.l2cache, |off| {
+                    let l1_idx: u64 = off >> 3;
+                    let virt_addr = (l1_idx << info.l2_index_shift) << info.cluster_bits();
+                    let k = SplitGuestOffset(virt_addr);
+                    k.l2_slice_key(info)
+                })
+                .await?;
+            if done {
+                break;
+            }
+        }
+        Ok(())
+    }
+
     /// for flushing data in the qcow2 virtual range to disk
     pub async fn fsync_range(&self, off: u64, len: usize) -> Qcow2Result<()> {
         self.call_fsync(off, len, 0).await
@@ -1823,7 +1843,8 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
                     None => return Err("nothing allocated for new l1 table".into()),
                     Some(res) => {
                         log::info!("ensure_l2_offset: write new allocated l1 table");
-                        self.flush_meta().await?;
+                        self.flush_refcount().await?;
+                        self.flush_mapping(&l1_table).await?;
                         new_l1_table.set_offset(Some(res.0));
                         self.flush_top_table(&new_l1_table).await?;
 
