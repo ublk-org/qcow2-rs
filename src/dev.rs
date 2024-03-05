@@ -9,7 +9,9 @@ use crate::meta::{
 use crate::ops::*;
 use crate::zero_buf;
 use async_recursion::async_recursion;
-use futures_locks::{RwLock as AsyncRwLock, RwLockWriteGuard as LockWriteGuard};
+use futures_locks::{
+    Mutex as AsyncMutex, RwLock as AsyncRwLock, RwLockWriteGuard as LockWriteGuard,
+};
 use miniz_oxide::inflate::core::{decompress as inflate, DecompressorOxide};
 use miniz_oxide::inflate::TINFLStatus;
 use std::cell::RefCell;
@@ -393,6 +395,7 @@ pub struct Qcow2Dev<T> {
 
     // set in case that any dirty meta is made
     need_flush: AtomicBool,
+    flush_lock: AsyncMutex<()>,
 
     file: T,
     backing_file: Option<Box<Qcow2Dev<T>>>,
@@ -453,6 +456,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
             refblock_cache: AsyncLruCache::new(rb_cache_cnt),
             new_cluster: AsyncRwLock::new(Default::default()),
             need_flush: AtomicBool::new(false),
+            flush_lock: AsyncMutex::new(()),
         };
 
         Ok(dev)
@@ -726,7 +730,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         for cache in cache_vec.iter() {
             let off = cache.get_offset().unwrap();
             let buf = unsafe { std::slice::from_raw_parts(cache.as_ptr(), cache.byte_size()) };
-            log::debug!(
+            log::trace!(
                 "flush_cache_entries: cache {} offset {:x}",
                 qcow2_type_of(cache),
                 off
@@ -808,7 +812,11 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         Ok(())
     }
 
-    async fn __flush_meta<A: Table + std::fmt::Debug, B: Table, F>(
+    // Flush one kind of meta data, l2 tables & l1, or refcount blocks with
+    // refcount table
+    //
+    // It is one generic helper, so named as flush_meta_generic()
+    async fn flush_meta_generic<A: Table + std::fmt::Debug, B: Table, F>(
         &self,
         rt: &A,
         cache: &AsyncLruCache<usize, AsyncRwLock<B>>,
@@ -845,11 +853,31 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         loop {
             let rt = &*self.reftable.read().await;
             let done = self
-                .__flush_meta(rt, &self.refblock_cache, |off| {
+                .flush_meta_generic(rt, &self.refblock_cache, |off| {
                     let rt_idx: u64 = off >> 3;
                     let host_cls = (rt_idx << info.rb_index_shift) << info.cluster_bits();
                     let k = HostCluster(host_cls);
                     k.rb_slice_key(info)
+                })
+                .await?;
+            if done {
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    //// flush mapping cache
+    async fn flush_mapping(&self, l1: &L1Table) -> Qcow2Result<()> {
+        let info = &self.info;
+
+        loop {
+            let done = self
+                .flush_meta_generic(l1, &self.l2cache, |off| {
+                    let l1_idx: u64 = off >> 3;
+                    let virt_addr = (l1_idx << info.l2_index_shift) << info.cluster_bits();
+                    let k = SplitGuestOffset(virt_addr);
+                    k.l2_slice_key(info)
                 })
                 .await?;
             if done {
@@ -867,19 +895,21 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
     /// flush meta data in ram to disk
     pub async fn flush_meta(&self) -> Qcow2Result<()> {
         let info = &self.info;
+        let _flush_lock = self.flush_lock.lock().await;
 
+        log::debug!("flush_meta: entry");
         loop {
+            // refcount is usually small size & continuous, so simply
+            // flush all
+            self.flush_refcount().await?;
+
             // read lock prevents update on l1 table, meantime
             // normal read and cache-hit write can go without any
             // problem
             let l1 = &*self.l1table.read().await;
 
-            // refcount is usually small size & continuous, so simply
-            // flush all
-            self.flush_refcount().await?;
-
             let done = self
-                .__flush_meta(l1, &self.l2cache, |off| {
+                .flush_meta_generic(l1, &self.l2cache, |off| {
                     let l1_idx: u64 = off >> 3;
                     let virt_addr = (l1_idx << info.l2_index_shift) << info.cluster_bits();
                     let k = SplitGuestOffset(virt_addr);
@@ -891,6 +921,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
                 break;
             }
         }
+        log::debug!("flush_meta: exit");
         Ok(())
     }
 
@@ -1280,15 +1311,16 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
     async fn try_allocate_from(
         &self,
         mut host_cluster: u64,
-        mut count: usize,
+        alloc_cnt: usize,
     ) -> Qcow2Result<Option<(u64, usize)>> {
-        assert!(count > 0);
+        assert!(alloc_cnt > 0);
 
         let info = &self.info;
         let cls = HostCluster(host_cluster);
         let rt_entry = self.ensure_refblock_offset(&cls).await?;
         let mut out_off = 0;
         let mut done = 0;
+        let mut count = alloc_cnt;
 
         // run cross-refblock-slice allocation, and we are allowed to return clusters
         // less than requested
@@ -1307,7 +1339,22 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
                     if done == 0 {
                         out_off = off.0;
                     } else {
-                        assert!(host_cluster == off.0);
+                        // can't make a big & continuous ranges, skip the small part
+                        // in previous loop, and retry from current host_cluster
+                        if host_cluster != off.0 {
+                            log::debug!(
+                                "try_allocate_from: fragment found and retry, free ({:x} {}) ({:x} {})",
+                                out_off,
+                                done,
+                                off.0,
+                                off.1
+                            );
+                            self.free_clusters(out_off, done).await?;
+                            self.free_clusters(off.0, off.1).await?;
+                            done = 0;
+                            count = alloc_cnt;
+                            continue;
+                        }
                     }
                     host_cluster = off.0 + ((off.1 as u64) << info.cluster_bits());
                     count -= off.1;
@@ -1349,7 +1396,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
                             .fetch_max(a.0 + info.cluster_size() as u64, Ordering::Relaxed);
                     }
 
-                    log::trace!(
+                    log::debug!(
                         "allocate_clusters: requested {:x}/{} allocated {:x} {:x}/{}",
                         count,
                         count,
@@ -1671,7 +1718,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
             return Err("un-aligned offset".into());
         }
 
-        log::trace!("read_at: offset {:x} len {} >>>", offset, buf.len());
+        log::debug!("read_at: offset {:x} len {} >>>", offset, buf.len());
 
         let extra = if offset + (len as u64) > vsize {
             len = ((offset + (len as u64) - vsize + bs as u64 - 1) as usize) & !bs_mask;
@@ -1742,7 +1789,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
             s
         };
 
-        log::trace!(
+        log::debug!(
             "read_at: offset {:x} len {} res {} <<<",
             old_offset,
             old_len,
@@ -1817,7 +1864,8 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
                     None => return Err("nothing allocated for new l1 table".into()),
                     Some(res) => {
                         log::info!("ensure_l2_offset: write new allocated l1 table");
-                        self.flush_meta().await?;
+                        self.flush_refcount().await?;
+                        self.flush_mapping(&l1_table).await?;
                         new_l1_table.set_offset(Some(res.0));
                         self.flush_top_table(&new_l1_table).await?;
 
@@ -2373,7 +2421,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         let single =
             (offset >> info.cluster_bits()) == ((offset + (len as u64) - 1) >> info.cluster_bits());
 
-        log::trace!("write_at offset {:x} len {} >>>", offset, buf.len());
+        log::debug!("write_at offset {:x} len {} >>>", offset, buf.len());
 
         if offset
             .checked_add(buf.len() as u64)
@@ -2424,7 +2472,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
             }
         }
 
-        log::trace!("write_at offset {:x} len {} <<<", old_offset, buf.len());
+        log::debug!("write_at offset {:x} len {} <<<", old_offset, buf.len());
         Ok(())
     }
 
