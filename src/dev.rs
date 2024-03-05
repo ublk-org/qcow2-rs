@@ -726,7 +726,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         for cache in cache_vec.iter() {
             let off = cache.get_offset().unwrap();
             let buf = unsafe { std::slice::from_raw_parts(cache.as_ptr(), cache.byte_size()) };
-            log::debug!(
+            log::trace!(
                 "flush_cache_entries: cache {} offset {:x}",
                 qcow2_type_of(cache),
                 off
@@ -868,6 +868,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
     pub async fn flush_meta(&self) -> Qcow2Result<()> {
         let info = &self.info;
 
+        log::debug!("flush_meta: entry");
         loop {
             // read lock prevents update on l1 table, meantime
             // normal read and cache-hit write can go without any
@@ -891,6 +892,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
                 break;
             }
         }
+        log::debug!("flush_meta: exit");
         Ok(())
     }
 
@@ -1349,7 +1351,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
                             .fetch_max(a.0 + info.cluster_size() as u64, Ordering::Relaxed);
                     }
 
-                    log::trace!(
+                    log::debug!(
                         "allocate_clusters: requested {:x}/{} allocated {:x} {:x}/{}",
                         count,
                         count,
@@ -1671,7 +1673,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
             return Err("un-aligned offset".into());
         }
 
-        log::trace!("read_at: offset {:x} len {} >>>", offset, buf.len());
+        log::debug!("read_at: offset {:x} len {} >>>", offset, buf.len());
 
         let extra = if offset + (len as u64) > vsize {
             len = ((offset + (len as u64) - vsize + bs as u64 - 1) as usize) & !bs_mask;
@@ -1742,7 +1744,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
             s
         };
 
-        log::trace!(
+        log::debug!(
             "read_at: offset {:x} len {} res {} <<<",
             old_offset,
             old_len,
@@ -2373,7 +2375,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         let single =
             (offset >> info.cluster_bits()) == ((offset + (len as u64) - 1) >> info.cluster_bits());
 
-        log::trace!("write_at offset {:x} len {} >>>", offset, buf.len());
+        log::debug!("write_at offset {:x} len {} >>>", offset, buf.len());
 
         if offset
             .checked_add(buf.len() as u64)
@@ -2424,7 +2426,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
             }
         }
 
-        log::trace!("write_at offset {:x} len {} <<<", old_offset, buf.len());
+        log::debug!("write_at offset {:x} len {} <<<", old_offset, buf.len());
         Ok(())
     }
 
