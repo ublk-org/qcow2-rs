@@ -870,14 +870,14 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
 
         log::debug!("flush_meta: entry");
         loop {
+            // refcount is usually small size & continuous, so simply
+            // flush all
+            self.flush_refcount().await?;
+
             // read lock prevents update on l1 table, meantime
             // normal read and cache-hit write can go without any
             // problem
             let l1 = &*self.l1table.read().await;
-
-            // refcount is usually small size & continuous, so simply
-            // flush all
-            self.flush_refcount().await?;
 
             let done = self
                 .__flush_meta(l1, &self.l2cache, |off| {
