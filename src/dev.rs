@@ -808,7 +808,11 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         Ok(())
     }
 
-    async fn __flush_meta<A: Table + std::fmt::Debug, B: Table, F>(
+    // Flush one kind of meta data, l2 tables & l1, or refcount blocks with
+    // refcount table
+    //
+    // It is one generic helper, so named as flush_meta_generic()
+    async fn flush_meta_generic<A: Table + std::fmt::Debug, B: Table, F>(
         &self,
         rt: &A,
         cache: &AsyncLruCache<usize, AsyncRwLock<B>>,
@@ -845,7 +849,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         loop {
             let rt = &*self.reftable.read().await;
             let done = self
-                .__flush_meta(rt, &self.refblock_cache, |off| {
+                .flush_meta_generic(rt, &self.refblock_cache, |off| {
                     let rt_idx: u64 = off >> 3;
                     let host_cls = (rt_idx << info.rb_index_shift) << info.cluster_bits();
                     let k = HostCluster(host_cls);
@@ -880,7 +884,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
             let l1 = &*self.l1table.read().await;
 
             let done = self
-                .__flush_meta(l1, &self.l2cache, |off| {
+                .flush_meta_generic(l1, &self.l2cache, |off| {
                     let l1_idx: u64 = off >> 3;
                     let virt_addr = (l1_idx << info.l2_index_shift) << info.cluster_bits();
                     let k = SplitGuestOffset(virt_addr);
