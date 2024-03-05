@@ -9,7 +9,9 @@ use crate::meta::{
 use crate::ops::*;
 use crate::zero_buf;
 use async_recursion::async_recursion;
-use futures_locks::{RwLock as AsyncRwLock, RwLockWriteGuard as LockWriteGuard};
+use futures_locks::{
+    Mutex as AsyncMutex, RwLock as AsyncRwLock, RwLockWriteGuard as LockWriteGuard,
+};
 use miniz_oxide::inflate::core::{decompress as inflate, DecompressorOxide};
 use miniz_oxide::inflate::TINFLStatus;
 use std::cell::RefCell;
@@ -393,6 +395,7 @@ pub struct Qcow2Dev<T> {
 
     // set in case that any dirty meta is made
     need_flush: AtomicBool,
+    flush_lock: AsyncMutex<()>,
 
     file: T,
     backing_file: Option<Box<Qcow2Dev<T>>>,
@@ -453,6 +456,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
             refblock_cache: AsyncLruCache::new(rb_cache_cnt),
             new_cluster: AsyncRwLock::new(Default::default()),
             need_flush: AtomicBool::new(false),
+            flush_lock: AsyncMutex::new(()),
         };
 
         Ok(dev)
@@ -891,6 +895,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
     /// flush meta data in ram to disk
     pub async fn flush_meta(&self) -> Qcow2Result<()> {
         let info = &self.info;
+        let _flush_lock = self.flush_lock.lock().await;
 
         log::debug!("flush_meta: entry");
         loop {
