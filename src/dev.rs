@@ -1311,15 +1311,16 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
     async fn try_allocate_from(
         &self,
         mut host_cluster: u64,
-        mut count: usize,
+        alloc_cnt: usize,
     ) -> Qcow2Result<Option<(u64, usize)>> {
-        assert!(count > 0);
+        assert!(alloc_cnt > 0);
 
         let info = &self.info;
         let cls = HostCluster(host_cluster);
         let rt_entry = self.ensure_refblock_offset(&cls).await?;
         let mut out_off = 0;
         let mut done = 0;
+        let mut count = alloc_cnt;
 
         // run cross-refblock-slice allocation, and we are allowed to return clusters
         // less than requested
@@ -1338,7 +1339,22 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
                     if done == 0 {
                         out_off = off.0;
                     } else {
-                        assert!(host_cluster == off.0);
+                        // can't make a big & continuous ranges, skip the small part
+                        // in previous loop, and retry from current host_cluster
+                        if host_cluster != off.0 {
+                            log::debug!(
+                                "try_allocate_from: fragment found and retry, free ({:x} {}) ({:x} {})",
+                                out_off,
+                                done,
+                                off.0,
+                                off.1
+                            );
+                            self.free_clusters(out_off, done).await?;
+                            self.free_clusters(off.0, off.1).await?;
+                            done = 0;
+                            count = alloc_cnt;
+                            continue;
+                        }
                     }
                     host_cluster = off.0 + ((off.1 as u64) << info.cluster_bits());
                     count -= off.1;
