@@ -8,14 +8,33 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build_linux:
+  build:
+    name: build qcow2-rs on both x86_64 and i686
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        toolchain:
+          - stable
+          - nightly
+        target:
+          - x86_64-unknown-linux-gnu
+          - i686-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@v3
+      - name: Install dependencies
+        if: matrix.target == 'i686-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-multilib
+      - run: rustup update ${{ matrix.toolchain }} && rustup default ${{ matrix.toolchain }} && rustup target add ${{ matrix.target }}
+      - run: cargo build --verbose --target ${{ matrix.target }}
+  test_linux:
     name: qcow2_rs ubuntu
     runs-on: ubuntu-latest
     strategy:
       matrix:
         toolchain:
           - stable
-          - 1.74.0
     steps:
       - uses: actions/checkout@v3
       - run: sudo apt-get update
@@ -27,7 +46,7 @@ jobs:
       - run: cargo test -- --nocapture
       - run: cargo test -r
 
-  build_win:
+  test_win:
     name: qcow2_rs windows
     runs-on: windows-latest
     strategy:
