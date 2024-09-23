@@ -94,7 +94,12 @@ impl Qcow2IoOps for Qcow2IoTokio {
             FallocateFlags::FALLOC_FL_PUNCH_HOLE
         };
 
-        Ok(fallocate(self.fd, f, offset as i64, len as i64)?)
+        Ok(fallocate(
+            self.fd,
+            f,
+            offset as libc::off_t,
+            len as libc::off_t,
+        )?)
     }
     #[cfg(not(target_os = "linux"))]
     async fn fallocate(&self, offset: u64, len: usize, _flags: u32) -> Qcow2Result<()> {

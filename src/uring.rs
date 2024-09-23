@@ -80,8 +80,8 @@ impl Qcow2IoOps for Qcow2IoUring {
         Ok(fallocate(
             self.file.as_raw_fd(),
             f,
-            offset as i64,
-            len as i64,
+            offset as libc::off_t,
+            len as libc::off_t,
         )?)
     }
 

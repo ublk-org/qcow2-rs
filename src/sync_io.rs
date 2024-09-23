@@ -47,7 +47,7 @@ impl Qcow2IoSync {
                 self.fd,
                 buf.as_mut_ptr() as *mut libc::c_void,
                 buf.len(),
-                offset as i64,
+                offset as libc::off_t,
             )
         };
 
@@ -73,7 +73,7 @@ impl Qcow2IoSync {
                 self.fd,
                 buf.as_ptr() as *const libc::c_void,
                 buf.len(),
-                offset as i64,
+                offset as libc::off_t,
             )
         };
 
@@ -111,7 +111,12 @@ impl Qcow2IoOps for Qcow2IoSync {
             FallocateFlags::FALLOC_FL_PUNCH_HOLE
         };
 
-        Ok(fallocate(self.fd, f, offset as i64, len as i64)?)
+        Ok(fallocate(
+            self.fd,
+            f,
+            offset as libc::off_t,
+            len as libc::off_t,
+        )?)
     }
     #[cfg(not(target_os = "linux"))]
     async fn fallocate(&self, offset: u64, len: usize, _flags: u32) -> Qcow2Result<()> {
