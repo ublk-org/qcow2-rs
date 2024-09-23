@@ -650,8 +650,8 @@ impl Qcow2Header {
             libc::memset((buf_start + l1_table.0) as *mut libc::c_void, 0, block_size);
         }
 
-        let l2_entries = cluster_size / 8;
-        let size_per_l1_entry = (l2_entries << cluster_bits) as u64;
+        let l2_entries = (cluster_size as u64) / 8;
+        let size_per_l1_entry = l2_entries << cluster_bits;
         let l1_entries = (size + size_per_l1_entry - 1) / size_per_l1_entry;
 
         let mut h = Qcow2RawHeader {

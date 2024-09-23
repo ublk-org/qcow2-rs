@@ -218,10 +218,10 @@ impl Qcow2Info {
         refcount_order: u8,
         bs: usize,
     ) -> usize {
-        let rb_entries = cluster_size * 8 / (1 << refcount_order);
-        let rt_entry_size = rb_entries * cluster_size;
+        let rb_entries = (cluster_size as u64) * 8 / (1 << refcount_order);
+        let rt_entry_size = rb_entries * (cluster_size as u64);
 
-        let rc_table_entries = (size + rt_entry_size as u64 - 1) / rt_entry_size as u64;
+        let rc_table_entries = (size + rt_entry_size - 1) / rt_entry_size;
         let rc_table_size =
             ((rc_table_entries as usize * std::mem::size_of::<u64>()) + bs - 1) & !(bs - 1);
 
