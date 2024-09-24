@@ -587,7 +587,7 @@ async fn copy_to_qcow2<T: Qcow2IoOps>(
 async fn convert_from_qcow2_dev<T: Qcow2IoOps>(dev: &Qcow2Dev<T>, raw: &Path) -> Qcow2Result<()> {
     let mut file = std::fs::File::create(raw).unwrap();
     let mut off: u64 = 0;
-    let buf_size = 64 << 20;
+    let buf_size = 8 << 20;
     let total = dev.info.virtual_size();
     while off < total {
         let len = std::cmp::min(buf_size, total - off);
@@ -607,7 +607,7 @@ async fn convert_to_qcow2_dev<T: Qcow2IoOps>(raw: &Path, dev: &Qcow2Dev<T>) -> Q
     let mut file = std::fs::OpenOptions::new().read(true).open(raw).unwrap();
 
     let mut off: u64 = 0;
-    let buf_size = 64 << 20;
+    let buf_size = 8 << 20;
     let total = file_orig_size;
     while off < total {
         let len = std::cmp::min(buf_size, total - off);
