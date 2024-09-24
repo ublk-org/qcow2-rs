@@ -12,7 +12,7 @@ categories = [ "asynchronous", "filesystem" ]
 publish = true
 
 [[bin]]
-name = "qcow2"
+name = "rqcow2"
 path = "src/main.rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

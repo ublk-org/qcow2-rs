@@ -52,9 +52,9 @@ mod integretion {
         let rt = Runtime::new().unwrap();
         rt.block_on(async move {
             let exe_path = if cfg!(debug_assertions) {
-                format!("target/debug/qcow2")
+                format!("target/debug/rqcow2")
             } else {
-                format!("target/release/qcow2")
+                format!("target/release/rqcow2")
             };
             __test_qcow2_utility_convert(exe_path).await;
         });
