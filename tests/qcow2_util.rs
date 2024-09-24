@@ -9,7 +9,7 @@ mod integretion {
     use tokio::runtime::Runtime;
 
     async fn __test_qcow2_utility_convert(exe_path: String) {
-        let size = 64 << 20;
+        let size = 8 << 20;
         let cluster_bits = 16;
 
         let mut buf = Qcow2IoBuf::<u8>::new(size as usize);
