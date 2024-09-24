@@ -1,13 +1,13 @@
-extern crate utilities;
+mod common;
 
 #[cfg(target_os = "linux")]
 #[cfg(test)]
 mod uring_integretion {
+    use crate::common::*;
     use qcow2_rs::dev::*;
     use qcow2_rs::qcow2_default_params;
     use qcow2_rs::utils::*;
     use std::path::PathBuf;
-    use utilities::*;
 
     #[test]
     fn test_qcow2_dev_write_uring() {

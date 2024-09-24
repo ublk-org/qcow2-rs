@@ -1,7 +1,8 @@
-extern crate utilities;
+mod common;
 
 #[cfg(test)]
 mod integretion {
+    use crate::common::*;
     use crypto_hash::{hex_digest, Algorithm};
     use qcow2_rs::dev::*;
     use qcow2_rs::helpers::Qcow2IoBuf;
@@ -12,7 +13,6 @@ mod integretion {
     use std::path::PathBuf;
     use std::time::Instant;
     use tokio::runtime::Runtime;
-    use utilities::*;
 
     #[test]
     fn test_qcow2_dev_read_null() {

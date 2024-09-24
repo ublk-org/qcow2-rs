@@ -1,15 +1,15 @@
-extern crate utilities;
+mod common;
 
 #[cfg(not(target_os = "windows"))]
 #[cfg(test)]
 mod sync_io_integretion {
+    use crate::common::*;
     use crypto_hash::{hex_digest, Algorithm};
     use qcow2_rs::dev::*;
     use qcow2_rs::qcow2_default_params;
     use qcow2_rs::utils::*;
     use std::path::PathBuf;
     use tokio::runtime::Runtime;
-    use utilities::*;
 
     async fn calculate_qcow2_data_md5_sync(qcow2f: &tempfile::NamedTempFile, size: u64) -> String {
         let path = PathBuf::from(qcow2f.path());

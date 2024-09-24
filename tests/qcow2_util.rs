@@ -1,12 +1,12 @@
-extern crate utilities;
+mod common;
 
 #[cfg(test)]
 mod integretion {
+    use crate::common::*;
     use crypto_hash::{hex_digest, Algorithm};
     use qcow2_rs::helpers::Qcow2IoBuf;
     use std::io::Read;
     use tokio::runtime::Runtime;
-    use utilities::*;
 
     async fn __test_qcow2_utility_convert(exe_path: String) {
         let size = 64 << 20;

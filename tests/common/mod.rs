@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use crypto_hash::{hex_digest, Algorithm};
 use qcow2_rs::dev::{Qcow2Dev, Qcow2DevParams};
 use qcow2_rs::helpers::Qcow2IoBuf;
