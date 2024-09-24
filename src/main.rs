@@ -556,17 +556,14 @@ async fn copy_from_qcow2<T: Qcow2IoOps>(
     dest: &mut std::fs::File,
     off: u64,
     bytes: usize,
-) -> Qcow2Result<()> {
+) -> Qcow2Result<usize> {
     let mut buf = Qcow2IoBuf::<u8>::new(bytes);
     let res = dev.read_at(&mut buf, off).await?;
-    assert!(res == bytes);
 
     dest.seek(SeekFrom::Start(off))?;
-    let res = dest.write(&buf)?;
+    let res = dest.write(&buf[0..res])?;
 
-    assert!(res == bytes);
-
-    Ok(())
+    Ok(res)
 }
 
 async fn copy_to_qcow2<T: Qcow2IoOps>(
@@ -574,14 +571,14 @@ async fn copy_to_qcow2<T: Qcow2IoOps>(
     src: &mut std::fs::File,
     off: u64,
     bytes: usize,
-) -> Qcow2Result<()> {
+) -> Qcow2Result<usize> {
     let mut buf = Qcow2IoBuf::<u8>::new(bytes);
 
     src.seek(SeekFrom::Start(off))?;
-    let _ = src.read(&mut buf)?;
+    let res = src.read(&mut buf)?;
 
-    dev.write_at(&buf, off).await?;
-    Ok(())
+    dev.write_at(&buf[0..res], off).await?;
+    Ok(res)
 }
 
 async fn convert_from_qcow2_dev<T: Qcow2IoOps>(dev: &Qcow2Dev<T>, raw: &Path) -> Qcow2Result<()> {
@@ -592,11 +589,11 @@ async fn convert_from_qcow2_dev<T: Qcow2IoOps>(dev: &Qcow2Dev<T>, raw: &Path) ->
     while off < total {
         let len = std::cmp::min(buf_size, total - off);
 
-        copy_from_qcow2(dev, &mut file, off, len as usize)
+        let res = copy_from_qcow2(dev, &mut file, off, len as usize)
             .await
             .unwrap();
 
-        off += len;
+        off += res as u64;
     }
 
     Ok(())
@@ -611,10 +608,10 @@ async fn convert_to_qcow2_dev<T: Qcow2IoOps>(raw: &Path, dev: &Qcow2Dev<T>) -> Q
     let total = file_orig_size;
     while off < total {
         let len = std::cmp::min(buf_size, total - off);
-        copy_to_qcow2(dev, &mut file, off, len as usize)
+        let res = copy_to_qcow2(dev, &mut file, off, len as usize)
             .await
             .unwrap();
-        off += len;
+        off += res as u64;
     }
     dev.flush_meta().await?;
 
