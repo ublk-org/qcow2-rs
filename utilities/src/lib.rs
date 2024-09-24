@@ -1,7 +1,6 @@
 use crypto_hash::{hex_digest, Algorithm};
 use qcow2_rs::dev::{Qcow2Dev, Qcow2DevParams};
 use qcow2_rs::helpers::Qcow2IoBuf;
-use qcow2_rs::meta::Qcow2Header;
 use qcow2_rs::ops::Qcow2IoOps;
 use qcow2_rs::qcow2_default_params;
 use qcow2_rs::utils::qcow2_setup_dev_tokio;
@@ -26,34 +25,6 @@ pub fn run_shell_cmd(p: &str) {
         eprintln!("Command failed with error:\n{}", error);
         panic!();
     }
-}
-
-fn make_qcow2_buf(cluster_bits: usize, refcount_order: u8, size: u64) -> Vec<u8> {
-    let bs_shift = 9_u8;
-    let bs = 1 << bs_shift;
-    let (rc_t, rc_b, _) =
-        Qcow2Header::calculate_meta_params(size, cluster_bits, refcount_order, bs);
-    let clusters = 1 + rc_t.1 + rc_b.1;
-    let img_size = ((clusters as usize) << cluster_bits) + 512;
-    let mut buf = vec![0u8; img_size];
-
-    Qcow2Header::format_qcow2(&mut buf, size, cluster_bits, refcount_order, bs).unwrap();
-
-    buf
-}
-
-pub fn make_temp_qcow2_img(
-    size: u64,
-    cluster_bits: usize,
-    refcount_order: u8,
-) -> tempfile::NamedTempFile {
-    let tmpfile = tempfile::NamedTempFile::new().unwrap();
-    let mut file = std::fs::File::create(tmpfile.path()).unwrap();
-
-    let buf = make_qcow2_buf(cluster_bits, refcount_order, size);
-    file.write_all(&buf).unwrap();
-
-    tmpfile
 }
 
 pub fn calculate_raw_md5(file_path: &str, off: u64, len: usize) -> String {

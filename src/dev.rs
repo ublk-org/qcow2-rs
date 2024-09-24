@@ -2826,10 +2826,9 @@ mod tests {
     use crate::helpers::Qcow2IoBuf;
     use crate::qcow2_default_params;
     use crate::tokio_io::Qcow2IoTokio;
-    use crate::utils::qcow2_setup_dev_tokio;
+    use crate::utils::{make_temp_qcow2_img, qcow2_setup_dev_tokio};
     use std::path::PathBuf;
     use tokio::runtime::Runtime;
-    use utilities::*;
 
     #[test]
     fn test_qcow2_dev_allocater_small() {

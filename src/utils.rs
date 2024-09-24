@@ -8,6 +8,7 @@ use crate::sync_io::Qcow2IoSync;
 #[cfg(target_os = "linux")]
 use crate::uring::Qcow2IoUring;
 use async_recursion::async_recursion;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 #[macro_export]
@@ -142,3 +143,31 @@ macro_rules! qcow2_setup_dev_fn_sync {
 
 #[cfg(not(target_os = "windows"))]
 qcow2_setup_dev_fn_sync!(Qcow2IoSync, qcow2_setup_dev_sync);
+
+fn make_qcow2_buf(cluster_bits: usize, refcount_order: u8, size: u64) -> Vec<u8> {
+    let bs_shift = 9_u8;
+    let bs = 1 << bs_shift;
+    let (rc_t, rc_b, _) =
+        Qcow2Header::calculate_meta_params(size, cluster_bits, refcount_order, bs);
+    let clusters = 1 + rc_t.1 + rc_b.1;
+    let img_size = ((clusters as usize) << cluster_bits) + 512;
+    let mut buf = vec![0u8; img_size];
+
+    Qcow2Header::format_qcow2(&mut buf, size, cluster_bits, refcount_order, bs).unwrap();
+
+    buf
+}
+
+pub fn make_temp_qcow2_img(
+    size: u64,
+    cluster_bits: usize,
+    refcount_order: u8,
+) -> tempfile::NamedTempFile {
+    let tmpfile = tempfile::NamedTempFile::new().unwrap();
+    let mut file = std::fs::File::create(tmpfile.path()).unwrap();
+
+    let buf = make_qcow2_buf(cluster_bits, refcount_order, size);
+    file.write_all(&buf).unwrap();
+
+    tmpfile
+}
