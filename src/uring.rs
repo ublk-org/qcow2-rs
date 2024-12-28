@@ -48,7 +48,7 @@ impl Qcow2IoOps for Qcow2IoUring {
         let ubuf = slice_to_vec::<u8>(buf);
 
         //let (res, ubuf) = self.file.write_at(ubuf, offset).submit().await; //tokio-uring github
-        let (res, ubuf) = self.file.write_at(ubuf, offset).await;
+        let (res, ubuf) = self.file.write_at(ubuf, offset).submit().await;
 
         std::mem::forget(ubuf);
         match res {
