@@ -13,6 +13,14 @@ mod integretion {
     use std::path::PathBuf;
     use std::time::Instant;
     use tokio::runtime::Runtime;
+    use hex;
+
+    #[test]
+    fn test_qcow2_parsing() {
+        let data = hex::decode("514649fb252525fa494651252525e7e70000000000000069252525252525252525252525252525252525252525252525252525252525252525252525252525252525252525252525252525252525252525252525252525252525252525252525252525252525252525").unwrap();
+        let qcow2_hdr = qcow2_rs::meta::Qcow2Header::from_buf(&data[..]);
+        assert!(qcow2_hdr.is_err());
+    }
 
     #[test]
     fn test_qcow2_dev_read_null() {

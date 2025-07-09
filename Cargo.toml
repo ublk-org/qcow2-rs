@@ -44,3 +44,4 @@ tokio-uring = { version = "0.5"}
 tempfile = "3.6.0"
 crypto-hash = "0.3"
 rand = "0.8"
+hex = "0.4.3"
