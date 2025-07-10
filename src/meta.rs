@@ -441,7 +441,12 @@ impl Qcow2Header {
             header.refcount_order = 4;
         }
 
-        let cluster_size = 1u64 << header.cluster_bits;
+        let cluster_bits = header.cluster_bits;
+        if !(9..=30).contains(&cluster_bits) {
+            return Err(format!("qcow2 cluster_bits {} is invalid", cluster_bits).into());
+        }
+
+        let cluster_size = 1u64 << cluster_bits;
         if cluster_size > Self::MAX_CLUSTER_SIZE as u64 {
             return Err(format!("qcow2 cluster size {} is too big", cluster_size).into());
         }
