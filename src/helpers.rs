@@ -176,15 +176,6 @@ impl<T> Drop for Qcow2IoBuf<T> {
     }
 }
 
-/// It is user's responsibility to not free buffer of the slice
-pub fn slice_to_vec<T>(s: &[T]) -> Vec<T> {
-    // Get a pointer to the data and its length from the existing slice
-    let ptr = s.as_ptr();
-    let len = s.len();
-
-    unsafe { Vec::from_raw_parts(ptr as *mut T, len, len) }
-}
-
 #[macro_export]
 macro_rules! zero_buf {
     ($buffer:expr) => {{
