@@ -16,7 +16,7 @@ pub struct Qcow2IoSync {
 }
 
 impl Qcow2IoSync {
-    pub fn new(path: &Path, ro: bool, dio: bool) -> Qcow2IoSync {
+    pub fn new(path: &Path, ro: bool, dio: bool) -> Qcow2Result<Qcow2IoSync> {
         #[cfg(target_os = "macos")]
         fn set_dio(_file: &File) {}
 
@@ -27,17 +27,17 @@ impl Qcow2IoSync {
             }
         }
 
-        let file = OpenOptions::new().read(true).write(!ro).open(path).unwrap();
+        let file = OpenOptions::new().read(true).write(!ro).open(path)?;
 
         if dio {
             set_dio(&file);
         }
 
         let fd = file.as_raw_fd();
-        Qcow2IoSync {
+        Ok(Qcow2IoSync {
             _file: RefCell::new(file),
             fd,
-        }
+        })
     }
 
     #[inline(always)]

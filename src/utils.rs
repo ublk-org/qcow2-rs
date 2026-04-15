@@ -94,7 +94,7 @@ macro_rules! qcow2_setup_dev_fn {
             path: &Path,
             params: &Qcow2DevParams,
         ) -> Qcow2Result<Qcow2Dev<$type>> {
-            let io = <$type>::new(path, params.is_read_only(), params.is_direct_io()).await;
+            let io = <$type>::new(path, params.is_read_only(), params.is_direct_io()).await?;
             let (mut dev, backing) = qcow2_alloc_dev(&path, io, params).await?;
             match backing {
                 Some(back_path) => {
@@ -124,7 +124,7 @@ qcow2_setup_dev_fn!(crate::tokio_io::Qcow2IoTokio, qcow2_setup_dev_tokio);
 macro_rules! qcow2_setup_dev_fn_sync {
     ($type:ty, $fn_name: ident) => {
         pub fn $fn_name(path: &Path, params: &Qcow2DevParams) -> Qcow2Result<Qcow2Dev<$type>> {
-            let io = <$type>::new(path, params.is_read_only(), params.is_direct_io());
+            let io = <$type>::new(path, params.is_read_only(), params.is_direct_io())?;
             let (mut dev, backing) = qcow2_alloc_dev_sync(&path, io, params)?;
             match backing {
                 Some(back_path) => {

@@ -81,20 +81,19 @@ pub struct Qcow2IoUring {
 }
 
 impl Qcow2IoUring {
-    pub async fn new(path: &Path, ro: bool, dio: bool) -> Qcow2IoUring {
+    pub async fn new(path: &Path, ro: bool, dio: bool) -> Qcow2Result<Qcow2IoUring> {
         let file = OpenOptions::new()
             .read(true)
             .write(!ro)
             .open(path.to_path_buf())
-            .await
-            .unwrap();
+            .await?;
 
         if dio {
             unsafe {
                 libc::fcntl(file.as_raw_fd(), libc::F_SETFL, libc::O_DIRECT);
             }
         }
-        Qcow2IoUring { file }
+        Ok(Qcow2IoUring { file })
     }
 }
 

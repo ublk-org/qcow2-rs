@@ -26,37 +26,35 @@ pub struct Qcow2IoTokio {
 
 impl Qcow2IoTokio {
     #[cfg(target_os = "linux")]
-    pub async fn new(path: &Path, ro: bool, dio: bool) -> Qcow2IoTokio {
+    pub async fn new(path: &Path, ro: bool, dio: bool) -> Qcow2Result<Qcow2IoTokio> {
         let file = OpenOptions::new()
             .read(true)
             .write(!ro)
             .open(path.to_path_buf())
-            .await
-            .unwrap();
+            .await?;
 
         assert!(!dio);
 
         let fd = file.as_raw_fd();
-        Qcow2IoTokio {
+        Ok(Qcow2IoTokio {
             file: tokio::sync::Mutex::new(file),
             fd,
-        }
+        })
     }
 
     #[cfg(not(target_os = "linux"))]
-    pub async fn new(path: &Path, ro: bool, dio: bool) -> Qcow2IoTokio {
+    pub async fn new(path: &Path, ro: bool, dio: bool) -> Qcow2Result<Qcow2IoTokio> {
         let file = OpenOptions::new()
             .read(true)
             .write(!ro)
             .open(path.to_path_buf())
-            .await
-            .unwrap();
+            .await?;
 
         assert!(!dio);
 
-        Qcow2IoTokio {
+        Ok(Qcow2IoTokio {
             file: tokio::sync::Mutex::new(file),
-        }
+        })
     }
 
     async fn write_at(&self, offset: u64, buf: &[u8]) -> Qcow2Result<()> {
