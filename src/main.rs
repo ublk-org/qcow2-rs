@@ -543,12 +543,10 @@ fn check_qcow2(args: CheckArgs) -> Qcow2Result<()> {
 
     rt.block_on(async move {
         let p = qcow2_rs::qcow2_default_params!(false, false);
-        let dev = qcow2_setup_dev_tokio(&args.file, &p).await.unwrap();
+        let dev = qcow2_setup_dev_tokio(&args.file, &p).await?;
 
-        dev.check().await.expect("check failed");
-    });
-
-    Ok(())
+        dev.check().await
+    })
 }
 
 async fn copy_from_qcow2<T: Qcow2IoOps>(
@@ -725,12 +723,17 @@ fn main() {
         .format_timestamp(None)
         .init();
 
-    match cli.command {
-        Commands::Dump(arg) => dump_qcow2(arg).unwrap(),
-        Commands::Format(arg) => format_qcow2(arg).unwrap(),
-        Commands::Map(arg) => map_qcow2(arg).unwrap(),
-        Commands::Info(arg) => info_qcow2(arg).unwrap(),
-        Commands::Check(arg) => check_qcow2(arg).unwrap(),
-        Commands::Convert(arg) => convert_qcow2(arg).unwrap(),
+    let result = match cli.command {
+        Commands::Dump(arg) => dump_qcow2(arg),
+        Commands::Format(arg) => format_qcow2(arg),
+        Commands::Map(arg) => map_qcow2(arg),
+        Commands::Info(arg) => info_qcow2(arg),
+        Commands::Check(arg) => check_qcow2(arg),
+        Commands::Convert(arg) => convert_qcow2(arg),
     };
+
+    if let Err(e) = result {
+        eprintln!("error: {}", e);
+        std::process::exit(1);
+    }
 }

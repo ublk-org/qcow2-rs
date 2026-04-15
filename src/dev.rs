@@ -2883,18 +2883,20 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
     async fn check_cluster(&self, virt_off: u64, cluster: Option<u64>) -> Qcow2Result<()> {
         match cluster {
             None => Ok(()),
-            Some(host_cluster) => {
-                match self.cluster_is_allocated(host_cluster).await? {
-                    false => {
-                        eprintln!(
-                            "virt_offset {:x} pointed to non-allocated cluster {:x}",
-                            virt_off, host_cluster
-                        );
-                    }
-                    true => {}
+            Some(host_cluster) => match self.cluster_is_allocated(host_cluster).await? {
+                true => Ok(()),
+                false => {
+                    eprintln!(
+                        "virt_offset {:x} pointed to non-allocated cluster {:x}",
+                        virt_off, host_cluster
+                    );
+                    Err(format!(
+                        "check: virt_offset {:x} pointed to non-allocated cluster {:x}",
+                        virt_off, host_cluster
+                    )
+                    .into())
                 }
-                Ok(())
-            }
+            },
         }
     }
 
