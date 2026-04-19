@@ -2753,18 +2753,20 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
     async fn check_cluster(&self, virt_off: u64, cluster: Option<u64>) -> Qcow2Result<()> {
         match cluster {
             None => Ok(()),
-            Some(host_cluster) => {
-                match self.cluster_is_allocated(host_cluster).await? {
-                    false => {
-                        eprintln!(
-                            "virt_offset {:x} pointed to non-allocated cluster {:x}",
-                            virt_off, host_cluster
-                        );
-                    }
-                    true => {}
+            Some(host_cluster) => match self.cluster_is_allocated(host_cluster).await? {
+                true => Ok(()),
+                false => {
+                    eprintln!(
+                        "virt_offset {:x} pointed to non-allocated cluster {:x}",
+                        virt_off, host_cluster
+                    );
+                    Err(format!(
+                        "check: virt_offset {:x} pointed to non-allocated cluster {:x}",
+                        virt_off, host_cluster
+                    )
+                    .into())
                 }
-                Ok(())
-            }
+            },
         }
     }
 
@@ -2950,7 +2952,9 @@ mod tests {
         rt.block_on(async move {
             let size = 64_u64 << 20;
             let img_file = make_temp_qcow2_img(size, 16, 4);
-            let io = Qcow2IoTokio::new(&img_file.path().to_path_buf(), true, false).await;
+            let io = Qcow2IoTokio::new(&img_file.path().to_path_buf(), true, false)
+                .await
+                .unwrap();
             let mut buf = Qcow2IoBuf::<u8>::new(4096);
             let _ = io.read_to(0, &mut buf).await;
             let header = Qcow2Header::from_buf(&buf).unwrap();
