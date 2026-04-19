@@ -2952,7 +2952,9 @@ mod tests {
         rt.block_on(async move {
             let size = 64_u64 << 20;
             let img_file = make_temp_qcow2_img(size, 16, 4);
-            let io = Qcow2IoTokio::new(&img_file.path().to_path_buf(), true, false).await;
+            let io = Qcow2IoTokio::new(&img_file.path().to_path_buf(), true, false)
+                .await
+                .unwrap();
             let mut buf = Qcow2IoBuf::<u8>::new(4096);
             let _ = io.read_to(0, &mut buf).await;
             let header = Qcow2Header::from_buf(&buf).unwrap();
