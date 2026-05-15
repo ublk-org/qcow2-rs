@@ -86,6 +86,17 @@ fn fallocate_punch_hole_shrinks_st_blocks_on_linux() {
                 blocks_after < blocks_before,
                 "punch_hole must shrink allocated blocks: before={blocks_before} after={blocks_after}",
             );
+        } else {
+            // Production code (`Qcow2Dev::call_fallocate`) falls back to
+            // write-zeros when the underlying fallocate is unsupported.
+            // `Qcow2IoTokio::fallocate` is the raw IO layer and has no
+            // such fallback, so replicate it here — otherwise the range
+            // is still the 0xAB prefill and the reads-as-zero assertion
+            // below would (correctly) fail. Suggested by @ming1 in
+            // review of PR #11.
+            let zero_buf = vec![0u8; 32 * 1024];
+            io.write_from(16 * 1024, &zero_buf).await.unwrap();
+            io.fsync(0, 0, 0).await.unwrap();
         }
         // Either way: logical file size unchanged, punched/zeroed range
         // reads as zero, surrounding bytes untouched.
