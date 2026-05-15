@@ -5,27 +5,27 @@ use crate::ops::*;
 use async_trait::async_trait;
 #[cfg(target_os = "linux")]
 use nix::fcntl::{fallocate, FallocateFlags};
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::os::fd::AsRawFd;
 use std::path::Path;
 use tokio::fs::{File, OpenOptions};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, SeekFrom};
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[derive(Debug)]
 pub struct Qcow2IoTokio {
     file: tokio::sync::Mutex<File>,
     fd: i32,
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 #[derive(Debug)]
 pub struct Qcow2IoTokio {
     file: tokio::sync::Mutex<File>,
 }
 
 impl Qcow2IoTokio {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub async fn new(path: &Path, ro: bool, dio: bool) -> Qcow2IoTokio {
         let file = OpenOptions::new()
             .read(true)
@@ -43,7 +43,7 @@ impl Qcow2IoTokio {
         }
     }
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     pub async fn new(path: &Path, ro: bool, dio: bool) -> Qcow2IoTokio {
         let file = OpenOptions::new()
             .read(true)
@@ -101,7 +101,42 @@ impl Qcow2IoOps for Qcow2IoTokio {
             len as libc::off_t,
         )?)
     }
-    #[cfg(not(target_os = "linux"))]
+
+    /// macOS hole-punch via `fcntl(F_PUNCHHOLE, &fpunchhole_t)` (available
+    /// since macOS 10.10). The kernel requires `fp_offset` and `fp_length`
+    /// to be multiples of the volume's logical block size (4096 on APFS);
+    /// sub-block ranges return `EINVAL`. We treat `EINVAL`/`EOPNOTSUPP`/
+    /// `ENOSYS` as soft fails and fall back to the zero-write path so
+    /// callers still get the reads-as-zero guarantee they expect from
+    /// `FALLOCATE_ZERO_RAGE` semantics — the host file just doesn't shrink
+    /// for that one call.
+    #[cfg(target_os = "macos")]
+    async fn fallocate(&self, offset: u64, len: usize, _flags: u32) -> Qcow2Result<()> {
+        let arg = libc::fpunchhole_t {
+            fp_flags: 0,
+            reserved: 0,
+            fp_offset: offset as libc::off_t,
+            fp_length: len as libc::off_t,
+        };
+        // SAFETY: `fcntl` with F_PUNCHHOLE takes a `*const fpunchhole_t`
+        // variadic argument. `arg` lives on this stack frame and outlives
+        // the synchronous call.
+        let res = unsafe { libc::fcntl(self.fd, libc::F_PUNCHHOLE, &arg) };
+        if res == 0 {
+            return Ok(());
+        }
+        let err = std::io::Error::last_os_error();
+        match err.raw_os_error() {
+            Some(libc::EINVAL) | Some(libc::EOPNOTSUPP) | Some(libc::ENOSYS) => {
+                let mut data = crate::helpers::Qcow2IoBuf::<u8>::new(len);
+                data.zero_buf();
+                self.write_at(offset, &data).await
+            }
+            _ => Err(err.into()),
+        }
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     async fn fallocate(&self, offset: u64, len: usize, _flags: u32) -> Qcow2Result<()> {
         let mut data = crate::helpers::Qcow2IoBuf::<u8>::new(len);
 
