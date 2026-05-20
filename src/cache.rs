@@ -219,7 +219,28 @@ impl<V> AsyncLruCacheEntryInner<V> {
 }
 
 impl<V> Drop for AsyncLruCacheEntryInner<V> {
+    /// A dirty cache entry at drop time means the caller dropped the
+    /// `Qcow2Dev` without first calling `flush_meta()` — the in-memory
+    /// modifications never reached disk. The previous behavior was to
+    /// `assert!` here, which turns the silent data loss into a panic
+    /// during drop. Panicking in `Drop` is hostile in async contexts:
+    /// during runtime teardown (or while a different panic is already
+    /// unwinding) it escalates to process abort, and even in the
+    /// graceful case it makes the missed-flush bug harder to investigate
+    /// because the panic message has no async backtrace.
+    ///
+    /// Logging at WARN level surfaces the same diagnostic without
+    /// stealing control of the unwind. The data loss is already done
+    /// by the time we get here; the user's bug is "didn't flush", and
+    /// they need to find it from the warning + their own backtrace,
+    /// not from a Drop-time panic.
     fn drop(&mut self) {
-        assert!(!self.is_dirty());
+        if self.is_dirty() {
+            log::warn!(
+                "AsyncLruCacheEntryInner<{}> dropped with dirty=true; \
+                 modifications were not flushed to disk (missing flush_meta?)",
+                std::any::type_name::<V>(),
+            );
+        }
     }
 }
