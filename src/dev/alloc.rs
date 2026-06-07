@@ -638,9 +638,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
 #[cfg(test)]
 mod tests {
     use crate::dev::*;
-    use crate::helpers::Qcow2IoBuf;
     use crate::qcow2_default_params;
-    use crate::tokio_io::Qcow2IoTokio;
     use crate::utils::{make_temp_qcow2_img, qcow2_setup_dev_tokio};
     use std::path::PathBuf;
     use tokio::runtime::Runtime;
