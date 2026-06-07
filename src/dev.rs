@@ -64,7 +64,7 @@ impl Qcow2Info {
         let cluster_shift: u8 = h.cluster_bits().try_into().unwrap();
         let cluster_size: usize = 1usize
             .checked_shl(cluster_shift.into())
-            .ok_or_else(|| format!("cluster_bits={} is too large", cluster_shift))?;
+            .ok_or_else(|| format!("cluster_bits={cluster_shift} is too large"))?;
         let refcount_order: u8 = h.refcount_order().try_into().unwrap();
 
         //at least two l2 caches
@@ -175,7 +175,7 @@ impl Qcow2Info {
     pub(crate) fn __max_l1_entries(size: u64, cluster_bits: usize, l2_entries: usize) -> usize {
         let size_per_entry = (l2_entries as u64) << cluster_bits;
         let max_entries = Qcow2Header::MAX_L1_SIZE as usize / size_of::<u64>();
-        let entries = ((size + size_per_entry - 1) / size_per_entry) as usize;
+        let entries = size.div_ceil(size_per_entry) as usize;
 
         std::cmp::min(entries, max_entries)
     }
@@ -220,7 +220,7 @@ impl Qcow2Info {
         let rb_entries = (cluster_size as u64) * 8 / (1 << refcount_order);
         let rt_entry_size = rb_entries * (cluster_size as u64);
 
-        let rc_table_entries = (size + rt_entry_size - 1) / rt_entry_size;
+        let rc_table_entries = size.div_ceil(rt_entry_size);
         let rc_table_size =
             ((rc_table_entries as usize * std::mem::size_of::<u64>()) + bs - 1) & !(bs - 1);
 
@@ -405,7 +405,7 @@ impl<T> std::fmt::Debug for Qcow2Dev<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let _ = write!(f, "Image path {:?}\ninfo {:?}\n", &self.path, &self.info);
         let _ = match &self.backing_file {
-            Some(b) => write!(f, "backing {:?}", b),
+            Some(b) => write!(f, "backing {b:?}"),
             _ => write!(f, "backing None"),
         };
         writeln!(f)
@@ -740,7 +740,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         let res = futures::future::join_all(f_vec).await;
         for r in res {
             if r.is_err() {
-                eprintln!("cache slice write failed {:?}\n", r);
+                eprintln!("cache slice write failed {r:?}\n");
                 return r;
             }
         }
@@ -1586,8 +1586,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
             let (status, _read, _written) = inflate(&mut dec_ox, compressed_data, buf, 0, 0);
             if status != TINFLStatus::Done && status != TINFLStatus::HasMoreOutput {
                 return Err(format!(
-                    "Failed to decompress cluster (host offset 0x{:x}+{}): {:?}",
-                    compressed_offset, compressed_length, status
+                    "Failed to decompress cluster (host offset 0x{compressed_offset:x}+{compressed_length}): {status:?}"
                 )
                 .into());
             }
@@ -1598,8 +1597,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
                 inflate(&mut dec_ox, compressed_data, &mut uncompressed_data, 0, 0);
             if status != TINFLStatus::Done && status != TINFLStatus::HasMoreOutput {
                 return Err(format!(
-                    "Failed to decompress cluster (host offset 0x{:x}+{}): {:?}",
-                    compressed_offset, compressed_length, status
+                    "Failed to decompress cluster (host offset 0x{compressed_offset:x}+{compressed_length}): {status:?}"
                 )
                 .into());
             }
@@ -2883,14 +2881,10 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         match cluster {
             None => Ok(()),
             Some(host_cluster) => {
-                match self.cluster_is_allocated(host_cluster).await? {
-                    false => {
-                        eprintln!(
-                            "virt_offset {:x} pointed to non-allocated cluster {:x}",
-                            virt_off, host_cluster
-                        );
-                    }
-                    true => {}
+                if !self.cluster_is_allocated(host_cluster).await? {
+                    eprintln!(
+                        "virt_offset {virt_off:x} pointed to non-allocated cluster {host_cluster:x}"
+                    );
                 }
                 Ok(())
             }
@@ -2941,10 +2935,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
     /// Prepare everything(loading l1/refcount table) for handling any qcow2 IO
     #[async_recursion(?Send)]
     pub async fn qcow2_prep_io(&self) -> Qcow2Result<()> {
-        match &self.backing_file {
-            Some(back) => back.qcow2_prep_io().await?,
-            None => {}
-        };
+        if let Some(back) = &self.backing_file { back.qcow2_prep_io().await? };
         self.__qcow2_prep_io().await
     }
 }

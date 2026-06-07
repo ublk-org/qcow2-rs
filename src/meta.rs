@@ -433,7 +433,7 @@ impl Qcow2Header {
 
         if header.version < 2 {
             let v = header.version;
-            return Err(format!("qcow2 v{} is not supported", v).into());
+            return Err(format!("qcow2 v{v} is not supported").into());
         }
 
         // refcount_order is always 4 for version 2
@@ -443,20 +443,19 @@ impl Qcow2Header {
 
         let cluster_bits = header.cluster_bits;
         if !(9..=30).contains(&cluster_bits) {
-            return Err(format!("qcow2 cluster_bits {} is invalid", cluster_bits).into());
+            return Err(format!("qcow2 cluster_bits {cluster_bits} is invalid").into());
         }
 
         let cluster_size = 1u64 << cluster_bits;
         if cluster_size > Self::MAX_CLUSTER_SIZE as u64 {
-            return Err(format!("qcow2 cluster size {} is too big", cluster_size).into());
+            return Err(format!("qcow2 cluster size {cluster_size} is too big").into());
         }
 
         let backing_filename = if header.backing_file_offset != 0 {
             let (offset, length) = (header.backing_file_offset, header.backing_file_size);
             if length > 1023 {
                 return Err(format!(
-                    "Backing file name is too long ({}, must not exceed 1023)",
-                    length
+                    "Backing file name is too long ({length}, must not exceed 1023)"
                 )
                 .into());
             }
@@ -475,7 +474,7 @@ impl Qcow2Header {
             let backing_buf = header_buf[(end - (length as u64)) as usize..(end as usize)].to_vec();
             Some(
                 String::from_utf8(backing_buf)
-                    .map_err(|err| format!("Backing file name is invalid: {}", err))?,
+                    .map_err(|err| format!("Backing file name is invalid: {err}"))?,
             )
         } else {
             None
@@ -535,9 +534,9 @@ impl Qcow2Header {
                 .filter(|bit| header.raw.incompatible_features & (1u64 << bit) != 0)
                 .map(|bit| {
                     if let Some(name) = header.feature_name(Qcow2FeatureType::Incompatible, bit) {
-                        format!("{} ({})", bit, name)
+                        format!("{bit} ({name})")
                     } else {
-                        format!("{}", bit)
+                        format!("{bit}")
                     }
                 })
                 .collect::<Vec<String>>();
@@ -562,7 +561,7 @@ impl Qcow2Header {
         let rc_table_offset = cluster_size as u64;
         let rc_table_size =
             Qcow2Info::__max_refcount_table_size(size, cluster_size, refcount_order, block_size);
-        let rc_table_clusters = (rc_table_size + cluster_size - 1) / cluster_size;
+        let rc_table_clusters = rc_table_size.div_ceil(cluster_size);
 
         let rc_block_offset = rc_table_offset + ((rc_table_clusters as u64) << cluster_bits);
         let rc_block_clusters = 1;
@@ -570,7 +569,7 @@ impl Qcow2Header {
         let l1_table_offset = rc_block_offset + cluster_size as u64;
         let l1_table_entries = Qcow2Info::get_max_l1_entries(size, cluster_bits);
         let l1_table_size = Qcow2Info::__max_l1_size(l1_table_entries, block_size);
-        let l1_table_clusters = (l1_table_size + cluster_size - 1) / cluster_size;
+        let l1_table_clusters = l1_table_size.div_ceil(cluster_size);
 
         let rc_table = (rc_table_offset, rc_table_clusters as u32);
         let rc_block = (rc_block_offset, rc_block_clusters);
@@ -657,7 +656,7 @@ impl Qcow2Header {
 
         let l2_entries = (cluster_size as u64) / 8;
         let size_per_l1_entry = l2_entries << cluster_bits;
-        let l1_entries = (size + size_per_l1_entry - 1) / size_per_l1_entry;
+        let l1_entries = size.div_ceil(size_per_l1_entry);
 
         let mut h = Qcow2RawHeader {
             magic: Self::QCOW2_MAGIC,
@@ -685,7 +684,7 @@ impl Qcow2Header {
 
         if let Some(backing) = self.backing_filename.as_ref() {
             self.raw.backing_file_offset = (header_len + header_exts.len()).try_into()?;
-            self.raw.backing_file_size = backing.as_bytes().len().try_into()?;
+            self.raw.backing_file_size = backing.len().try_into()?;
         } else {
             self.raw.backing_file_offset = 0;
             self.raw.backing_file_size = 0;
@@ -836,7 +835,7 @@ impl Qcow2HeaderExtension {
                 Qcow2HeaderExtensionType::End => return Ok(None),
                 Qcow2HeaderExtensionType::BackingFileFormat => {
                     let fmt = String::from_utf8(data)
-                        .map_err(|err| format!("Invalid backing file format: {}", err))?;
+                        .map_err(|err| format!("Invalid backing file format: {err}"))?;
                     Qcow2HeaderExtension::BackingFileFormat(fmt)
                 }
                 Qcow2HeaderExtensionType::FeatureNameTable => {
@@ -1897,7 +1896,7 @@ pub trait Table: From<Qcow2IoBuf<Self::Entry>> {
     }
 
     fn cluster_count(&self, qcow2_info: &Qcow2Info) -> usize {
-        (self.byte_size() + qcow2_info.cluster_size() - 1) / qcow2_info.cluster_size()
+        self.byte_size().div_ceil(qcow2_info.cluster_size())
     }
 
     fn is_update(&self) -> bool {

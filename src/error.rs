@@ -69,7 +69,7 @@ impl_from!(std::alloc::LayoutError, OutOfMemory);
 
 impl Qcow2Error {
     pub fn from_desc(description: String) -> Self {
-        let io = io::Error::new(io::ErrorKind::Other, description.clone());
+        let io = io::Error::other(description.clone());
         Qcow2Error { description, io }
     }
 
