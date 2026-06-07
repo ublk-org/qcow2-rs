@@ -579,14 +579,6 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         log::debug!("flush_meta: exit");
         Ok(())
     }
-
-    // if we are running out of reftable, allocate more clusters and replace
-    // current refcount table with new one
-    //
-    // All dirty refblock tables need to be flushed before flushing out the new
-    // reftable.
-    //
-    // Very slow code path.
     /// Discard the guest range `[virtual_offset, virtual_offset + len)`.
     ///
     /// For every fully-covered guest cluster in the range, the L2 mapping

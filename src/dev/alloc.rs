@@ -72,6 +72,13 @@ impl HostCluster {
 }
 
 impl<T: Qcow2IoOps> Qcow2Dev<T> {
+    // if we are running out of reftable, allocate more clusters and replace
+    // current refcount table with new one
+    //
+    // All dirty refblock tables need to be flushed before flushing out the new
+    // reftable.
+    //
+    // Very slow code path.
     async fn grow_reftable(
         &self,
         reftable: &LockWriteGuard<RefTable>,
