@@ -14,7 +14,6 @@ use futures_locks::{
 };
 use miniz_oxide::inflate::core::{decompress as inflate, DecompressorOxide};
 use miniz_oxide::inflate::TINFLStatus;
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::mem::size_of;
 use std::ops::RangeInclusive;
@@ -318,8 +317,8 @@ pub struct Qcow2DevParams {
     pub(crate) l2_cache: Option<(u8, usize)>,
     bs_shift: u8,
     direct_io: bool,
-    read_only: RefCell<bool>,
-    backing: RefCell<Option<bool>>,
+    read_only: bool,
+    backing: Option<bool>,
 }
 
 impl Qcow2DevParams {
@@ -334,9 +333,9 @@ impl Qcow2DevParams {
             bs_shift: bs_bits,
             rb_cache,
             l2_cache,
-            read_only: std::cell::RefCell::new(ro),
+            read_only: ro,
             direct_io: dio,
-            backing: std::cell::RefCell::new(None),
+            backing: None,
         }
     }
 
@@ -344,8 +343,8 @@ impl Qcow2DevParams {
         self.bs_shift
     }
 
-    pub fn set_read_only(&self, ro: bool) {
-        *self.read_only.borrow_mut() = ro;
+    pub fn set_read_only(&mut self, ro: bool) {
+        self.read_only = ro;
     }
 
     pub fn is_direct_io(&self) -> bool {
@@ -353,17 +352,17 @@ impl Qcow2DevParams {
     }
 
     pub fn is_read_only(&self) -> bool {
-        *self.read_only.borrow()
+        self.read_only
     }
 
-    pub fn mark_backing_dev(&self, backing: Option<bool>) {
-        *self.backing.borrow_mut() = backing;
+    pub fn mark_backing_dev(&mut self, backing: Option<bool>) {
+        self.backing = backing;
 
         self.set_read_only(true);
     }
 
     pub fn is_backing_dev(&self) -> bool {
-        (*self.backing.borrow()).is_some()
+        self.backing.is_some()
     }
 }
 

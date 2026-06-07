@@ -2,14 +2,13 @@ use crate::error::Qcow2Result;
 use crate::ops::*;
 #[rustversion::before(1.75)]
 use async_trait::async_trait;
-use std::cell::RefCell;
 use std::fs::{File, OpenOptions};
 use std::os::unix::io::AsRawFd;
 use std::path::Path;
 
 #[derive(Debug)]
 pub struct Qcow2IoSync {
-    _file: RefCell<File>,
+    _file: File,
     fd: i32,
 }
 
@@ -23,7 +22,7 @@ impl Qcow2IoSync {
         }
 
         Qcow2IoSync {
-            _file: RefCell::new(file),
+            _file: file,
             fd,
         }
     }
