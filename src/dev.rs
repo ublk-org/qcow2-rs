@@ -2935,7 +2935,9 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
     /// Prepare everything(loading l1/refcount table) for handling any qcow2 IO
     #[async_recursion(?Send)]
     pub async fn qcow2_prep_io(&self) -> Qcow2Result<()> {
-        if let Some(back) = &self.backing_file { back.qcow2_prep_io().await? };
+        if let Some(back) = &self.backing_file {
+            back.qcow2_prep_io().await?
+        };
         self.__qcow2_prep_io().await
     }
 }

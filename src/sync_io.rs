@@ -21,10 +21,7 @@ impl Qcow2IoSync {
             crate::ops::set_direct_io(fd);
         }
 
-        Qcow2IoSync {
-            _file: file,
-            fd,
-        }
+        Qcow2IoSync { _file: file, fd }
     }
 
     #[inline(always)]
