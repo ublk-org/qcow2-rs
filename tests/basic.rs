@@ -4,6 +4,7 @@ mod common;
 mod integretion {
     use crate::common::*;
     use crypto_hash::{hex_digest, Algorithm};
+    use hex;
     use qcow2_rs::dev::*;
     use qcow2_rs::helpers::Qcow2IoBuf;
     use qcow2_rs::qcow2_default_params;
@@ -13,7 +14,6 @@ mod integretion {
     use std::path::PathBuf;
     use std::time::Instant;
     use tokio::runtime::Runtime;
-    use hex;
 
     #[test]
     fn test_qcow2_parsing() {
