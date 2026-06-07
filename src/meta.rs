@@ -130,7 +130,7 @@ impl_entry_display_trait!(RefTableEntry);
 impl_entry_display_trait!(RefBlockEntry);
 
 #[derive(Debug, Default, Deserialize, Serialize)]
-#[repr(packed)]
+#[repr(Rust, packed)]
 pub(crate) struct Qcow2RawHeader {
     /// QCOW magic string ("QFI\xfb")
     magic: u32,
@@ -329,7 +329,7 @@ impl Qcow2RawHeader {
 }
 
 #[derive(Default, Deserialize, Serialize)]
-#[repr(packed)]
+#[repr(Rust, packed)]
 struct Qcow2HeaderExtensionHeader {
     /// Type code of the header extension
     extension_type: u32,
