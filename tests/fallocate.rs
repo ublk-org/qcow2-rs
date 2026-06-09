@@ -47,10 +47,10 @@ fn fallocate_punch_hole_shrinks_st_blocks_on_linux() {
         let blocks_before = prefill(&path, size, 0xAB).await;
 
         let io = Qcow2IoTokio::new(&path, false, false).await;
-        // Some CI filesystems (notably overlay-backed layouts seen on
-        // GitHub-hosted Ubuntu runners) return EOPNOTSUPP for
-        // `FALLOC_FL_PUNCH_HOLE | FALLOC_FL_ZERO_RANGE` — the combo this
-        // call uses when `FALLOCATE_ZERO_RANGE` is set. Production code
+        // `FALLOCATE_ZERO_RANGE` maps to `FALLOC_FL_PUNCH_HOLE |
+        // FALLOC_FL_KEEP_SIZE` on Linux. Some CI filesystems (notably
+        // overlay-backed layouts seen on GitHub-hosted Ubuntu runners) may
+        // not support hole-punching and return EOPNOTSUPP. Production code
         // (`Qcow2Dev::call_fallocate`) has a write-zeros fallback for
         // exactly this case, so the qcow2 caller's reads-as-zero
         // contract is preserved; the file just doesn't shrink for that

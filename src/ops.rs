@@ -13,14 +13,17 @@ impl Qcow2OpsFlags {
 /// underlying fd supports `FALLOC_FL_PUNCH_HOLE`; `tokio-uring` has no
 /// async fallocate of its own, so it also goes through this path.
 #[cfg(target_os = "linux")]
-pub(crate) fn linux_punch_hole(fd: i32, offset: u64, len: usize, flags: u32) -> Qcow2Result<()> {
+pub(crate) fn linux_punch_hole(fd: i32, offset: u64, len: usize, _flags: u32) -> Qcow2Result<()> {
     use nix::fcntl::{fallocate, FallocateFlags};
 
-    let f = if (flags & Qcow2OpsFlags::FALLOCATE_ZERO_RANGE) != 0 {
-        FallocateFlags::FALLOC_FL_ZERO_RANGE | FallocateFlags::FALLOC_FL_KEEP_SIZE
-    } else {
-        FallocateFlags::FALLOC_FL_PUNCH_HOLE | FallocateFlags::FALLOC_FL_KEEP_SIZE
-    };
+    // PUNCH_HOLE deallocates the range (shrinking the host file's block
+    // count) and makes it read back as zero, covering both the discard and
+    // FALLOCATE_ZERO_RANGE contracts; it must be ORed with KEEP_SIZE so the
+    // logical file size is preserved. This matches the macOS backend, which
+    // always issues F_PUNCHHOLE regardless of flags. Combining PUNCH_HOLE
+    // with ZERO_RANGE is rejected by the kernel, and ZERO_RANGE alone does
+    // not free blocks on every filesystem, so neither reclaims space.
+    let f = FallocateFlags::FALLOC_FL_PUNCH_HOLE | FallocateFlags::FALLOC_FL_KEEP_SIZE;
 
     fallocate(fd, f, offset as libc::off_t, len as libc::off_t)?;
     Ok(())
