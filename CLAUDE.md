@@ -76,8 +76,8 @@ cargo clippy
 
 - **src/lib.rs**: Main library exports and module declarations
 - **src/main.rs**: CLI utility (`rqcow2`) with subcommands for dump, info, format, check, map, and convert
-- **src/dev.rs**: Core device abstraction (`Qcow2Dev`, `Qcow2DevParams`, `Qcow2Info`). This is by far the largest file (~3K lines) and holds the read/write/discard/flush logic, L1/L2 mapping, the refcount allocator, and the cluster-level COW/soft-update state machine. Start here to understand IO behavior.
-- **src/meta.rs**: qcow2 on-disk metadata structures (~2K lines): headers, L1/L2 tables, refcount table/blocks, cluster addressing, and the format/serialization helpers.
+- **src/dev/**: Core device abstraction, split across submodules. Start with `mod.rs` for `Qcow2Dev`, `Qcow2DevParams`, `Qcow2Info`, then `read.rs`/`write.rs`/`discard.rs` for the IO paths, `cache.rs` for metadata caching/flush, `alloc.rs` for the refcount allocator and cluster-level COW/soft-update state machine, `check.rs` for integrity verification, and `info.rs` for geometry derivation. Start here to understand IO behavior.
+- **src/meta/**: qcow2 on-disk metadata structures, split across submodules: `header.rs` (headers + format/serialization helpers), `l1.rs`/`l2.rs` (mapping tables), `refcount.rs` (refcount table/blocks), `addr.rs` (cluster addressing), and `table.rs` (shared table traits/macros).
 - **src/ops.rs**: The `Qcow2IoOps` trait — the runtime-abstraction seam. Four methods: `read_to`, `write_from`, `fallocate` (used to implement `discard` and zero-range), and `fsync`. Any new low-level IO capability must be added here and in all three backends.
 - **src/cache.rs**: LRU cache implementation for metadata
 - **src/error.rs**: Error handling types
