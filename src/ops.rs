@@ -5,7 +5,7 @@ use async_trait::async_trait;
 pub struct Qcow2OpsFlags {}
 
 impl Qcow2OpsFlags {
-    pub const FALLOCATE_ZERO_RAGE: u32 = 1_u32 << 0;
+    pub const FALLOCATE_ZERO_RANGE: u32 = 1_u32 << 0;
 }
 
 /// Map qcow2 fallocate flags to a host hole-punch and issue the
@@ -16,10 +16,10 @@ impl Qcow2OpsFlags {
 pub(crate) fn linux_punch_hole(fd: i32, offset: u64, len: usize, flags: u32) -> Qcow2Result<()> {
     use nix::fcntl::{fallocate, FallocateFlags};
 
-    let f = if (flags & Qcow2OpsFlags::FALLOCATE_ZERO_RAGE) != 0 {
-        FallocateFlags::FALLOC_FL_PUNCH_HOLE | FallocateFlags::FALLOC_FL_ZERO_RANGE
+    let f = if (flags & Qcow2OpsFlags::FALLOCATE_ZERO_RANGE) != 0 {
+        FallocateFlags::FALLOC_FL_ZERO_RANGE | FallocateFlags::FALLOC_FL_KEEP_SIZE
     } else {
-        FallocateFlags::FALLOC_FL_PUNCH_HOLE
+        FallocateFlags::FALLOC_FL_PUNCH_HOLE | FallocateFlags::FALLOC_FL_KEEP_SIZE
     };
 
     fallocate(fd, f, offset as libc::off_t, len as libc::off_t)?;

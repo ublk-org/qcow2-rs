@@ -50,7 +50,7 @@ fn fallocate_punch_hole_shrinks_st_blocks_on_linux() {
         // Some CI filesystems (notably overlay-backed layouts seen on
         // GitHub-hosted Ubuntu runners) return EOPNOTSUPP for
         // `FALLOC_FL_PUNCH_HOLE | FALLOC_FL_ZERO_RANGE` — the combo this
-        // call uses when `FALLOCATE_ZERO_RAGE` is set. Production code
+        // call uses when `FALLOCATE_ZERO_RANGE` is set. Production code
         // (`Qcow2Dev::call_fallocate`) has a write-zeros fallback for
         // exactly this case, so the qcow2 caller's reads-as-zero
         // contract is preserved; the file just doesn't shrink for that
@@ -59,7 +59,7 @@ fn fallocate_punch_hole_shrinks_st_blocks_on_linux() {
         // assertion. The read-as-zero check below still validates the
         // user-facing contract on both paths.
         let punched = match io
-            .fallocate(16 * 1024, 32 * 1024, Qcow2OpsFlags::FALLOCATE_ZERO_RAGE)
+            .fallocate(16 * 1024, 32 * 1024, Qcow2OpsFlags::FALLOCATE_ZERO_RANGE)
             .await
         {
             Ok(()) => true,
@@ -127,7 +127,7 @@ fn fallocate_punch_hole_shrinks_st_blocks_on_macos() {
         let io = Qcow2IoTokio::new(&path, false, false).await;
         // 16 KiB offset, 32 KiB length — both 4-KiB-aligned, so APFS
         // accepts the punch.
-        io.fallocate(16 * 1024, 32 * 1024, Qcow2OpsFlags::FALLOCATE_ZERO_RAGE)
+        io.fallocate(16 * 1024, 32 * 1024, Qcow2OpsFlags::FALLOCATE_ZERO_RANGE)
             .await
             .expect("macOS F_PUNCHHOLE on 4-KiB-aligned range should succeed");
         io.fsync(0, 0, 0).await.unwrap();
@@ -170,7 +170,7 @@ fn fallocate_sub_block_range_falls_back_to_zero_write_on_macos() {
 
         let io = Qcow2IoTokio::new(&path, false, false).await;
         // 1 KiB offset, 1 KiB length — neither is a multiple of 4 KiB.
-        io.fallocate(1024, 1024, Qcow2OpsFlags::FALLOCATE_ZERO_RAGE)
+        io.fallocate(1024, 1024, Qcow2OpsFlags::FALLOCATE_ZERO_RANGE)
             .await
             .expect("unaligned macOS range must soft-fail to zero-write, not propagate EINVAL");
         io.fsync(0, 0, 0).await.unwrap();

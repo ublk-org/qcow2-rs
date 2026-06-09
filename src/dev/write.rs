@@ -54,7 +54,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
 
                 let mut new_l1_table = l1_table.clone_and_grow(l1_index, info.cluster_size());
                 let new_l1_clusters = new_l1_table.cluster_count(info);
-                let allocated = self.allocate_clusters(new_l1_clusters).await.unwrap();
+                let allocated = self.allocate_clusters(new_l1_clusters).await?;
 
                 // fixme: allocated may return less clusters, here has to cover this
                 // case
@@ -464,11 +464,10 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
 
         let (cluster_start, cluster_cnt) = match self.allocate_clusters(nr_clusters).await? {
             Some((s, c)) => (s, c),
-            _ => self
-                .allocate_cluster()
-                .await
-                .unwrap()
-                .expect("running out of cluster"),
+            None => match self.allocate_cluster().await? {
+                Some(res) => res,
+                None => return Err("running out of cluster space".into()),
+            },
         };
 
         let mut this_off = start;

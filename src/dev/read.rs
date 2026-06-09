@@ -248,7 +248,9 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         log::debug!("read_at: offset {:x} len {} >>>", offset, buf.len());
 
         let extra = if offset + (len as u64) > vsize {
-            len = ((offset + (len as u64) - vsize + bs as u64 - 1) as usize) & !bs_mask;
+            // Clamp to the in-image portion: only `vsize - offset` bytes are
+            // backed by data, rounded down to a block boundary.
+            len = ((vsize - offset) as usize) & !bs_mask;
             if info.is_back_file() {
                 buf.len() - len
             } else {
@@ -297,7 +299,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
             for i in 0..res.len() {
                 let exp = if i == 0 {
                     first_len
-                } else if i - 1 == res.len() {
+                } else if i == res.len() - 1 {
                     last_len
                 } else {
                     info.cluster_size()

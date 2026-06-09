@@ -182,10 +182,10 @@ impl RefBlock {
             0 => ((raw_data[index / 8] >> (index % 8)) & 0b0000_0001) as u64,
 
             // refcount_bits == 2
-            1 => ((raw_data[index / 4] >> (index % 4)) & 0b0000_0011) as u64,
+            1 => ((raw_data[index / 4] >> ((index % 4) * 2)) & 0b0000_0011) as u64,
 
             // refcount_bits == 4
-            2 => ((raw_data[index / 2] >> (index % 2)) & 0b0000_1111) as u64,
+            2 => ((raw_data[index / 2] >> ((index % 2) * 4)) & 0b0000_1111) as u64,
 
             // refcount_bits == 8
             3 => raw_data[index] as u64,
@@ -228,8 +228,9 @@ impl RefBlock {
                     )
                     .into());
                 }
-                raw_data[index / 4] = (raw_data[index / 4] & !(0b0000_0011 << (index % 4)))
-                    | ((value as u8) << (index % 4));
+                let shift = (index % 4) * 2;
+                raw_data[index / 4] =
+                    (raw_data[index / 4] & !(0b0000_0011 << shift)) | ((value as u8) << shift);
             }
 
             // refcount_bits == 4
@@ -241,8 +242,9 @@ impl RefBlock {
                     )
                     .into());
                 }
-                raw_data[index / 2] = (raw_data[index / 2] & !(0b0000_1111 << (index % 2)))
-                    | ((value as u8) << (index % 2));
+                let shift = (index % 2) * 4;
+                raw_data[index / 2] =
+                    (raw_data[index / 2] & !(0b0000_1111 << shift)) | ((value as u8) << shift);
             }
 
             // refcount_bits == 8

@@ -224,7 +224,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
                                         f_vec.push(self.call_fallocate(
                                             cache_off & !((1 << info.cluster_bits()) - 1),
                                             1 << info.cluster_bits(),
-                                            Qcow2OpsFlags::FALLOCATE_ZERO_RAGE,
+                                            Qcow2OpsFlags::FALLOCATE_ZERO_RANGE,
                                         ));
                                         cluster_map.insert(key, locked_cls);
                                     }

@@ -8,7 +8,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
     /// For every fully-covered guest cluster in the range, the L2 mapping
     /// is cleared to "unallocated", the host cluster's refcount is
     /// decremented via `free_clusters`, and the host file extent is
-    /// punched via `call_fallocate(FALLOCATE_ZERO_RAGE)`. After the call
+    /// punched via `call_fallocate(FALLOCATE_ZERO_RANGE)`. After the call
     /// returns, reads from the discarded range return zero (per qcow2
     /// §"L2 table entry" — an L2 entry of 0 is the "unallocated" state,
     /// which reads as zero) and the underlying host file shrinks on
@@ -122,12 +122,12 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         self.free_clusters(host_cluster, host_count).await?;
 
         // Punch the host file so the OS reclaims the bytes. The
-        // FALLOCATE_ZERO_RAGE flag asks for both hole-punch + reads-as-
+        // FALLOCATE_ZERO_RANGE flag asks for both hole-punch + reads-as-
         // zero semantics. On filesystems that don't support either,
         // call_fallocate falls back to writing zeros (see `call_fallocate`
         // implementation), so the LBPRZ-equivalent contract still holds.
         let punch_len = host_count * info.cluster_size();
-        self.call_fallocate(host_cluster, punch_len, Qcow2OpsFlags::FALLOCATE_ZERO_RAGE)
+        self.call_fallocate(host_cluster, punch_len, Qcow2OpsFlags::FALLOCATE_ZERO_RANGE)
             .await?;
 
         Ok(())

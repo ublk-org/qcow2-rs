@@ -126,13 +126,13 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
             (refblock_offset - cls.rb_slice_host_start(info))
                 .try_into()
                 .unwrap(),
-            Qcow2OpsFlags::FALLOCATE_ZERO_RAGE,
+            Qcow2OpsFlags::FALLOCATE_ZERO_RANGE,
         );
         let rb = self.flush_table(&new_refblock, 0, new_refblock.byte_size());
         let rb_after = self.call_fallocate(
             refblock_offset + rb_size as u64,
             cls.rb_slice_host_end(info) as usize - refblock_offset as usize - rb_size,
-            Qcow2OpsFlags::FALLOCATE_ZERO_RAGE,
+            Qcow2OpsFlags::FALLOCATE_ZERO_RANGE,
         );
         let (res0, res1, res2) = futures::join!(rb_before, rb, rb_after);
         if res0.is_err() || res1.is_err() || res2.is_err() {

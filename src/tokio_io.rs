@@ -95,7 +95,7 @@ impl Qcow2IoOps for Qcow2IoTokio {
     /// sub-block ranges return `EINVAL`. We treat `EINVAL`/`EOPNOTSUPP`/
     /// `ENOSYS` as soft fails and fall back to the zero-write path so
     /// callers still get the reads-as-zero guarantee they expect from
-    /// `FALLOCATE_ZERO_RAGE` semantics — the host file just doesn't shrink
+    /// `FALLOCATE_ZERO_RANGE` semantics — the host file just doesn't shrink
     /// for that one call.
     #[cfg(target_os = "macos")]
     async fn fallocate(&self, offset: u64, len: usize, _flags: u32) -> Qcow2Result<()> {
