@@ -153,11 +153,10 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
                 grown_rt.cluster_count(&self.info),
             )?;
 
-            let buf = h.serialize_to_buf()?;
-            if let Err(err) = self.call_write(0, &buf).await {
-                h.set_reftable(old_rt_offset, old_rt_clusters).unwrap();
-                return Err(err);
-            }
+            self.commit_header(&mut h, |h| {
+                h.set_reftable(old_rt_offset, old_rt_clusters).unwrap()
+            })
+            .await?;
         }
 
         self.free_clusters(old_rt_offset, old_rt_clusters).await?;

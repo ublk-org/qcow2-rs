@@ -4,7 +4,7 @@ use crate::cache::AsyncLruCacheEntry;
 use crate::error::Qcow2Result;
 use crate::helpers::{qcow2_type_of, Qcow2IoBuf};
 use crate::meta::{L1Entry, L1Table, L2Table, SplitGuestOffset, Table, TableEntry};
-use futures_locks::RwLock as AsyncRwLock;
+use futures_locks::{RwLock as AsyncRwLock, RwLockWriteGuard as LockWriteGuard};
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 
@@ -40,6 +40,24 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
             }
             Ok(_) => Ok(()),
         }
+    }
+
+    /// Write the (already updated) header out; on failure run `rollback`
+    /// to restore the in-ram header so ram & disk stay consistent
+    pub(crate) async fn commit_header<F>(
+        &self,
+        h: &mut LockWriteGuard<Qcow2Header>,
+        rollback: F,
+    ) -> Qcow2Result<()>
+    where
+        F: FnOnce(&mut Qcow2Header),
+    {
+        let buf = h.serialize_to_buf()?;
+        if let Err(err) = self.call_write(0, &buf).await {
+            rollback(h);
+            return Err(err);
+        }
+        Ok(())
     }
 
     /// flush data range in (offset, len) to disk

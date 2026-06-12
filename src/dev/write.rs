@@ -27,12 +27,8 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         let old_offset = h.l1_table_offset();
 
         h.set_l1_table(l1_offset, l1_entries)?;
-        let buf = h.serialize_to_buf()?;
-        if let Err(err) = self.call_write(0, &buf).await {
-            h.set_l1_table(old_offset, old_entries).unwrap();
-            return Err(err);
-        }
-        Ok(())
+        self.commit_header(&mut h, |h| h.set_l1_table(old_offset, old_entries).unwrap())
+            .await
     }
 
     /// for fill up l1 entry
