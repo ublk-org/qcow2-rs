@@ -213,7 +213,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
                 let slice_idx = cls.rb_slice_index(info);
 
                 refblock.decrement(slice_idx).unwrap();
-                if refblock.get(slice_idx).is_zero() && first_zero {
+                if first_zero && refblock.get(slice_idx).is_zero() {
                     self.free_cluster_offset
                         .fetch_min(host_cluster, Ordering::Relaxed);
                     first_zero = false;
