@@ -1,5 +1,5 @@
 use crate::error::Qcow2Result;
-use crate::helpers::Qcow2IoBuf;
+use crate::helpers::{IntAlignment, Qcow2IoBuf};
 use crate::meta::{L2Entry, Mapping, MappingSource, SplitGuestOffset};
 use crate::zero_buf;
 use async_recursion::async_recursion;
@@ -97,11 +97,10 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         let compressed_length = mapping.compressed_length.unwrap();
 
         // for supporting dio, we have to run aligned IO
-        let bs = 1 << info.block_size_shift;
-        let bs_mask = !((1_u64 << info.block_size_shift) - 1);
-        let aligned_off = compressed_offset & bs_mask;
+        let bs = 1_usize << info.block_size_shift;
+        let aligned_off = compressed_offset.align_down(bs as u64).unwrap();
         let pad = (compressed_offset - aligned_off) as usize;
-        let aligned_len = (pad + compressed_length + bs - 1) & (bs_mask as usize);
+        let aligned_len = (pad + compressed_length).align_up(bs).unwrap();
 
         let mut _compressed_data = Qcow2IoBuf::<u8>::new(aligned_len);
         let res = self.call_read(aligned_off, &mut _compressed_data).await?;

@@ -1,4 +1,5 @@
 use crate::error::Qcow2Result;
+use crate::helpers::IntAlignment;
 use crate::meta::Qcow2Header;
 
 /// all readable Qcow2 info, make it into single cache line
@@ -190,9 +191,7 @@ impl Qcow2Info {
 
     #[inline]
     pub(crate) fn __max_l1_size(max_l1_entries: usize, bs: usize) -> usize {
-        let entries = max_l1_entries;
-
-        (entries * size_of::<u64>() + bs - 1) & !(bs - 1)
+        (max_l1_entries * size_of::<u64>()).align_up(bs).unwrap()
     }
 
     pub(crate) fn __max_refcount_table_size(
@@ -205,8 +204,9 @@ impl Qcow2Info {
         let rt_entry_size = rb_entries * (cluster_size as u64);
 
         let rc_table_entries = size.div_ceil(rt_entry_size);
-        let rc_table_size =
-            ((rc_table_entries as usize * std::mem::size_of::<u64>()) + bs - 1) & !(bs - 1);
+        let rc_table_size = (rc_table_entries as usize * std::mem::size_of::<u64>())
+            .align_up(bs)
+            .unwrap();
 
         std::cmp::min(rc_table_size, 8usize << 20)
     }

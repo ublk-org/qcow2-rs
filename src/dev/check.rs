@@ -1,5 +1,6 @@
 use super::*;
 use crate::error::Qcow2Result;
+use crate::helpers::IntAlignment;
 use crate::meta::{Mapping, MappingSource, Table, TableEntry};
 use futures_locks::RwLock as AsyncRwLock;
 use std::collections::HashMap;
@@ -73,7 +74,13 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         let cls_size = info.cluster_size();
         let l1_range = {
             let h = self.header.read().await;
-            let l1_size = (self.l1table.read().await.byte_size() + cls_size - 1) & !(cls_size - 1);
+            let l1_size = self
+                .l1table
+                .read()
+                .await
+                .byte_size()
+                .align_up(cls_size)
+                .unwrap();
 
             h.l1_table_offset()..(h.l1_table_offset() + l1_size as u64)
         };
