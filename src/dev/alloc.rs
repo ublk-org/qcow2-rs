@@ -567,15 +567,8 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
     ) -> Qcow2Result<usize> {
         let rb_h = self.get_refblock(cls, rt_e).await?;
         let rb = rb_h.value().write().await;
-        let mut total = 0;
 
-        for i in 0..rb.entries() {
-            if !rb.get(i).is_zero() {
-                total += 1;
-            }
-        }
-
-        Ok(total)
+        Ok((0..rb.entries()).filter(|&i| !rb.get(i).is_zero()).count())
     }
 
     async fn count_rt_entry_alloc_clusters(&self, cls: &HostCluster) -> Qcow2Result<Option<usize>> {
