@@ -69,7 +69,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
                 ..(h.reftable_offset() + (h.reftable_clusters() << info.cluster_bits()) as u64)
         };
 
-        for c in rt_range {
+        for c in rt_range.step_by(info.cluster_size()) {
             Self::add_used_cluster_to_set(ranges, c >> self.info.cluster_bits());
         }
 
@@ -94,7 +94,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
             h.l1_table_offset()..(h.l1_table_offset() + l1_size as u64)
         };
 
-        for c in l1_range {
+        for c in l1_range.step_by(cls_size) {
             Self::add_used_cluster_to_set(ranges, c >> self.info.cluster_bits());
         }
 
