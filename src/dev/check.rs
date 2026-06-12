@@ -110,7 +110,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         let mut allocated = 0;
         let mut compressed = 0;
 
-        for start in (0..end).step_by(1 << info.cluster_bits()) {
+        for start in (0..end).step_by(info.cluster_size()) {
             let mapping = self.get_mapping(start).await?;
 
             match mapping.source {
@@ -139,12 +139,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
     }
 
     fn is_allocated_cluster_in_use(set: &Vec<&RangeInclusive<u64>>, cluster: u64) -> bool {
-        for range in set {
-            if range.contains(&cluster) {
-                return true;
-            }
-        }
-        false
+        set.iter().any(|range| range.contains(&cluster))
     }
 
     /// Return Host Cluster usage, such as, allocated clusters, how many of them
@@ -216,7 +211,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
             info.virtual_size(),
             max_allocated
         );
-        for start in (0..max_allocated).step_by(1 << info.cluster_bits()) {
+        for start in (0..max_allocated).step_by(info.cluster_size()) {
             let allocated = self.cluster_is_allocated(start).await?;
             if !allocated {
                 continue;
@@ -250,11 +245,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         let rb_handle = self.get_refblock(&cls, &rt_entry).await?;
         let rb = rb_handle.value().read().await;
 
-        if rb.get(cls.rb_slice_index(&self.info)).is_zero() {
-            Ok(false)
-        } else {
-            Ok(true)
-        }
+        Ok(!rb.get(cls.rb_slice_index(&self.info)).is_zero())
     }
 
     async fn check_cluster(&self, virt_off: u64, cluster: Option<u64>) -> Qcow2Result<()> {
@@ -287,7 +278,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         let info = &self.info;
         let end = info.virtual_size();
 
-        for start in (0..end).step_by(1 << info.cluster_bits()) {
+        for start in (0..end).step_by(info.cluster_size()) {
             let mapping = self.get_mapping(start).await?;
 
             self.check_single_mapping(start, mapping).await?;
