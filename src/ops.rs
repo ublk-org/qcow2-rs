@@ -31,7 +31,6 @@ pub(crate) fn linux_punch_hole(fd: i32, offset: u64, len: usize, _flags: u32) ->
 
 /// A freshly allocated, zero-filled IO buffer used by the discard fallback
 /// path on platforms/fds without hole-punch support.
-#[cfg(not(target_os = "linux"))]
 pub(crate) fn zeroed_io_buf(len: usize) -> crate::helpers::Qcow2IoBuf<u8> {
     let mut data = crate::helpers::Qcow2IoBuf::<u8>::new(len);
     data.zero_buf();

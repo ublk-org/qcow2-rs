@@ -2,7 +2,7 @@ use super::*;
 use crate::cache::AsyncLruCache;
 use crate::cache::AsyncLruCacheEntry;
 use crate::error::Qcow2Result;
-use crate::helpers::{qcow2_type_of, Qcow2IoBuf};
+use crate::helpers::qcow2_type_of;
 use crate::meta::{L1Entry, L1Table, L2Table, SplitGuestOffset, Table, TableEntry};
 use futures_locks::{RwLock as AsyncRwLock, RwLockWriteGuard as LockWriteGuard};
 use std::collections::hash_map::Entry;
@@ -32,10 +32,8 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         let res = self.file.fallocate(offset, len, flags).await;
         match res {
             Err(_) => {
-                let mut zero_data = Qcow2IoBuf::<u8>::new(len);
-
                 log::trace!("discard fallback off {:x} len {}", offset, len);
-                zero_data.zero_buf();
+                let zero_data = zeroed_io_buf(len);
                 self.call_write(offset, &zero_data).await
             }
             Ok(_) => Ok(()),
