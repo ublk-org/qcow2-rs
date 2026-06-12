@@ -5,6 +5,7 @@ use crate::error::Qcow2Result;
 use crate::helpers::{qcow2_type_of, Qcow2IoBuf};
 use crate::meta::{L1Entry, L1Table, L2Table, SplitGuestOffset, Table, TableEntry};
 use futures_locks::RwLock as AsyncRwLock;
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 
 impl<T: Qcow2IoOps> Qcow2Dev<T> {
@@ -205,28 +206,28 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
                         Some(cache_off) => {
                             let key = cache_off >> info.cluster_bits();
 
-                            if !cluster_map.contains_key(&key) && self.cluster_is_new(key).await {
+                            if let Entry::Vacant(slot) = cluster_map.entry(key) {
                                 let cls_map = self.new_cluster.read().await;
                                 // keep this cluster locked, so that concurrent discard can
                                 // be avoided
-                                let mut locked_cls = cls_map.get(&key).unwrap().write().await;
+                                if let Some(cluster) = cls_map.get(&key) {
+                                    let mut locked_cls = cluster.write().await;
 
-                                log::debug!(
-                                    "flush_cache_entries: discard cluster {:x} done {}",
-                                    cache_off & !((1 << info.cluster_bits()) - 1),
-                                    *locked_cls
-                                );
-                                if !(*locked_cls) {
-                                    // mark it as discarded, so others can observe it after
-                                    // grabbing write lock
-                                    *locked_cls = true;
-                                    if cls_map.contains_key(&key) {
+                                    log::debug!(
+                                        "flush_cache_entries: discard cluster {:x} done {}",
+                                        info.cluster_round_down(cache_off),
+                                        *locked_cls
+                                    );
+                                    if !(*locked_cls) {
+                                        // mark it as discarded, so others can observe it after
+                                        // grabbing write lock
+                                        *locked_cls = true;
                                         f_vec.push(self.call_fallocate(
-                                            cache_off & !((1 << info.cluster_bits()) - 1),
-                                            1 << info.cluster_bits(),
+                                            info.cluster_round_down(cache_off),
+                                            info.cluster_size(),
                                             Qcow2OpsFlags::FALLOCATE_ZERO_RANGE,
                                         ));
-                                        cluster_map.insert(key, locked_cls);
+                                        slot.insert(locked_cls);
                                     }
                                 }
                             }

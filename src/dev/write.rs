@@ -181,34 +181,33 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         let key = host_off >> info.cluster_bits();
 
         let mut discard = None;
-        let cluster_lock = if self.cluster_is_new(key).await {
+        let cluster_lock = {
             let cls_map = self.new_cluster.read().await;
             // keep this cluster locked, so that concurrent discard can
             // be avoided
 
-            if cls_map.contains_key(&key) {
-                let mut lock = cls_map.get(&key).unwrap().write().await;
+            match cls_map.get(&key) {
+                Some(cluster) => {
+                    let mut lock = cluster.write().await;
 
-                // don't handle discard any more if someone else has done
-                // that, otherwise mark this cluster is being handled.
-                //
-                // use this per-cluster lock for covering backign COW too,
-                // the whole cluster is copied to top image with this write
-                // lock covered, so any concurrent write has to be started
-                // after the copy is done
-                if !(*lock) {
-                    *lock = true;
+                    // don't handle discard any more if someone else has done
+                    // that, otherwise mark this cluster is being handled.
+                    //
+                    // use this per-cluster lock for covering backign COW too,
+                    // the whole cluster is copied to top image with this write
+                    // lock covered, so any concurrent write has to be started
+                    // after the copy is done
+                    if !(*lock) {
+                        *lock = true;
 
-                    discard = Some(self.call_fallocate(host_off, info.cluster_size(), 0));
-                    Some(lock)
-                } else {
-                    None
+                        discard = Some(self.call_fallocate(host_off, info.cluster_size(), 0));
+                        Some(lock)
+                    } else {
+                        None
+                    }
                 }
-            } else {
-                None
+                None => None,
             }
-        } else {
-            None
         };
 
         if let Some(lock) = cluster_lock {
