@@ -159,12 +159,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
     }
 
     #[inline]
-    async fn do_read_zero(
-        &self,
-        _mapping: Mapping,
-        _off_in_cls: usize,
-        buf: &mut [u8],
-    ) -> Qcow2Result<usize> {
+    async fn do_read_zero(&self, buf: &mut [u8]) -> Qcow2Result<usize> {
         zero_buf!(buf);
         Ok(buf.len())
     }
@@ -196,14 +191,8 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         );
         match mapping.source {
             MappingSource::DataFile => self.do_read_data_file(mapping, off_in_cls, buf).await,
-            MappingSource::Zero | MappingSource::Unallocated => {
-                let mapping = self.get_mapping(offset).await?;
-                self.do_read_zero(mapping, off_in_cls, buf).await
-            }
-            MappingSource::Backing => {
-                let mapping = self.get_mapping(offset).await?;
-                self.do_read_backing(mapping, off_in_cls, buf).await
-            }
+            MappingSource::Zero | MappingSource::Unallocated => self.do_read_zero(buf).await,
+            MappingSource::Backing => self.do_read_backing(mapping, off_in_cls, buf).await,
             MappingSource::Compressed => self.do_read_compressed(mapping, off_in_cls, buf).await,
         }
     }
