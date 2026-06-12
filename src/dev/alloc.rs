@@ -427,28 +427,20 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         let rb_handle = self.get_refblock(cls, rt_e).await?;
         let mut rb = rb_handle.value().write().await;
 
-        match rb.get_free_range(rb_slice_index, count) {
+        let range = match rb.get_free_range(rb_slice_index, count) {
+            Some(r) => Some(r),
+            None if fixed_start => None,
+            None => rb.get_tail_free_range(),
+        };
+
+        match range {
             Some(r) => {
                 rb.alloc_range(r.start, r.end)?;
                 rb_handle.set_dirty(true);
                 self.mark_need_flush(true);
                 Ok(Some((cls.cluster_off_from_slice(info, r.start), r.len())))
             }
-            _ => {
-                if fixed_start {
-                    Ok(None)
-                } else {
-                    match rb.get_tail_free_range() {
-                        Some(r) => {
-                            rb.alloc_range(r.start, r.end)?;
-                            rb_handle.set_dirty(true);
-                            self.mark_need_flush(true);
-                            Ok(Some((cls.cluster_off_from_slice(info, r.start), r.len())))
-                        }
-                        _ => Ok(None),
-                    }
-                }
-            }
+            None => Ok(None),
         }
     }
 
