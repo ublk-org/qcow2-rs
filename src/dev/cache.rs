@@ -93,21 +93,8 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
 
     pub(crate) async fn get_l1_entry(&self, split: &SplitGuestOffset) -> Qcow2Result<L1Entry> {
         let l1_index = split.l1_index(&self.info);
-        let res = {
-            let handle = self.l1table.read().await;
-            if handle.is_update() {
-                Some(handle.get(l1_index))
-            } else {
-                None
-            }
-        };
 
-        let l1_entry = match res {
-            None => self.l1table.read().await.get(l1_index),
-            Some(entry) => entry,
-        };
-
-        Ok(l1_entry)
+        Ok(self.l1table.read().await.get(l1_index))
     }
 
     #[inline]
