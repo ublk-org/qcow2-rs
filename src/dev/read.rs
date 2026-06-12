@@ -253,10 +253,10 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
 
             self.do_read(l2_entry, offset, buf).await?
         } else {
-            let mut reads = Vec::new();
+            let nr_clusters = (len >> info.cluster_bits()) + 2;
+            let mut reads = Vec::with_capacity(nr_clusters);
+            let mut lens = Vec::with_capacity(nr_clusters);
             let mut remain = buf;
-            let mut first_len = 0;
-            let mut last_len = 0;
             let mut idx = 0;
             let mut s = 0;
             let l2_entries = self.get_l2_entries(offset, len).await?;
@@ -267,31 +267,17 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
                 let (iobuf, b) = remain.split_at_mut(curr_len);
                 remain = b;
 
-                if first_len == 0 {
-                    first_len = curr_len;
-                }
-
                 reads.push(self.do_read(l2_entries[idx], offset, iobuf));
+                lens.push(curr_len);
 
                 offset += curr_len as u64;
                 len -= curr_len;
-                if len == 0 {
-                    last_len = curr_len;
-                }
                 idx += 1;
             }
 
             let res = futures::future::join_all(reads).await;
-            for i in 0..res.len() {
-                let exp = if i == 0 {
-                    first_len
-                } else if i == res.len() - 1 {
-                    last_len
-                } else {
-                    info.cluster_size()
-                };
-
-                match res[i] {
+            for (exp, r) in lens.into_iter().zip(res) {
+                match r {
                     Ok(r) => {
                         s += r;
                         if r != exp {
