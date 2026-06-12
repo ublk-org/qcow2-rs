@@ -275,14 +275,12 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
 
         let mut f_vec = Vec::new();
         for cache in cache_vec.iter() {
-            let off = cache.get_offset().unwrap();
-            let buf = unsafe { std::slice::from_raw_parts(cache.as_ptr(), cache.byte_size()) };
             log::trace!(
                 "flush_cache_entries: cache {} offset {:x}",
                 qcow2_type_of(cache),
-                off
+                cache.get_offset().unwrap()
             );
-            f_vec.push(self.call_write(off, buf));
+            f_vec.push(self.flush_table(&**cache, 0, cache.byte_size()));
         }
 
         let res = futures::future::join_all(f_vec).await;

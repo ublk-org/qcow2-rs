@@ -310,10 +310,8 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
                 self.flush_refcount().await?;
 
                 // flush mapping table in-place update
-                let off = l2_table.get_offset().unwrap();
-                let buf =
-                    unsafe { std::slice::from_raw_parts(l2_table.as_ptr(), l2_table.byte_size()) };
-                self.call_write(off, buf).await?;
+                self.flush_table(&*l2_table, 0, l2_table.byte_size())
+                    .await?;
                 l2_handle.set_dirty(false);
 
                 // release l2 table, so that this new mapping can be flushed
