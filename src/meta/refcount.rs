@@ -287,22 +287,17 @@ impl RefBlock {
         self.__set(index, val)
     }
 
-    fn check_if_free(&self, r: std::ops::Range<usize>) -> bool {
-        for i in r {
-            if !self.get(i).is_zero() {
-                return false;
-            }
-        }
-        true
-    }
-
     pub fn get_free_range(&self, start: usize, count: usize) -> Option<std::ops::Range<usize>> {
         assert!(start + count <= self.entries());
         let max_start = self.entries() - count;
 
-        for i in start..=max_start {
-            if self.check_if_free(i..i + count) {
-                return Some(i..i + count);
+        let mut i = start;
+        while i <= max_start {
+            // a window containing an allocated entry can't match, so
+            // resume the search right after that entry
+            match (i..i + count).find(|&j| !self.get(j).is_zero()) {
+                None => return Some(i..i + count),
+                Some(j) => i = j + 1,
             }
         }
 
