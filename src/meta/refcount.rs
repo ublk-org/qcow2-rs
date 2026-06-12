@@ -201,30 +201,29 @@ impl RefBlock {
     }
 
     fn __set(&mut self, index: usize, value: u64) -> Qcow2Result<()> {
+        // refcount_bits == 64 can hold any value
+        if self.refcount_order < 6 {
+            let refcount_bits = 1u64 << self.refcount_order;
+            let max = (1u64 << refcount_bits) - 1;
+
+            if value > max {
+                return Err(format!(
+                    "Cannot increase refcount beyond {max} with refcount_bits={refcount_bits}"
+                )
+                .into());
+            }
+        }
+
         let raw_data = &mut self.raw_data.as_u8_slice_mut();
         match self.refcount_order {
             // refcount_bits == 1
             0 => {
-                if value > 0b0000_0001 {
-                    return Err(format!(
-                        "Cannot increase refcount beyond {} with refcount_bits=1",
-                        0b0000_0001
-                    )
-                    .into());
-                }
                 raw_data[index / 8] = (raw_data[index / 8] & !(0b0000_0001 << (index % 8)))
                     | ((value as u8) << (index % 8));
             }
 
             // refcount_bits == 2
             1 => {
-                if value > 0b0000_0011 {
-                    return Err(format!(
-                        "Cannot increase refcount beyond {} with refcount_bits=2",
-                        0b0000_0011
-                    )
-                    .into());
-                }
                 let shift = (index % 4) * 2;
                 raw_data[index / 4] =
                     (raw_data[index / 4] & !(0b0000_0011 << shift)) | ((value as u8) << shift);
@@ -232,13 +231,6 @@ impl RefBlock {
 
             // refcount_bits == 4
             2 => {
-                if value > 0b0000_1111 {
-                    return Err(format!(
-                        "Cannot increase refcount beyond {} with refcount_bits=4",
-                        0b0000_1111
-                    )
-                    .into());
-                }
                 let shift = (index % 2) * 4;
                 raw_data[index / 2] =
                     (raw_data[index / 2] & !(0b0000_1111 << shift)) | ((value as u8) << shift);
@@ -246,38 +238,17 @@ impl RefBlock {
 
             // refcount_bits == 8
             3 => {
-                if value > u8::MAX as u64 {
-                    return Err(format!(
-                        "Cannot increase refcount beyond {} with refcount_bits=8",
-                        u8::MAX
-                    )
-                    .into());
-                }
                 raw_data[index] = value as u8;
             }
 
             // refcount_bits == 16
             4 => {
-                if value > u16::MAX as u64 {
-                    return Err(format!(
-                        "Cannot increase refcount beyond {} with refcount_bits=16",
-                        u16::MAX
-                    )
-                    .into());
-                }
                 raw_data[index * 2] = (value >> 8) as u8;
                 raw_data[index * 2 + 1] = value as u8;
             }
 
             // refcount_bits == 32
             5 => {
-                if value > u32::MAX as u64 {
-                    return Err(format!(
-                        "Cannot increase refcount beyond {} with refcount_bits=32",
-                        u32::MAX
-                    )
-                    .into());
-                }
                 raw_data[index * 4] = (value >> 24) as u8;
                 raw_data[index * 4 + 1] = (value >> 16) as u8;
                 raw_data[index * 4 + 2] = (value >> 8) as u8;
