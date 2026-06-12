@@ -396,18 +396,35 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         }
     }
 
+    /// Map a byte offset inside the reftable to the cache key of the first
+    /// refblock slice covered by that reftable entry (inverse of
+    /// `HostCluster::rb_slice_key`)
+    fn rb_slice_key_of_rt_off(&self, off: u64) -> usize {
+        let info = &self.info;
+        let rt_idx: u64 = off >> 3;
+        let host_cls = (rt_idx << info.rb_index_shift) << info.cluster_bits();
+
+        HostCluster(host_cls).rb_slice_key(info)
+    }
+
+    /// Map a byte offset inside the l1 table to the cache key of the first
+    /// l2 slice covered by that l1 entry (inverse of
+    /// `SplitGuestOffset::l2_slice_key`)
+    fn l2_slice_key_of_l1_off(&self, off: u64) -> usize {
+        let info = &self.info;
+        let l1_idx: u64 = off >> 3;
+        let virt_addr = (l1_idx << info.l2_index_shift) << info.cluster_bits();
+
+        SplitGuestOffset(virt_addr).l2_slice_key(info)
+    }
+
     //// flush refcount table and block dirty data to disk
     pub(crate) async fn flush_refcount(&self) -> Qcow2Result<()> {
-        let info = &self.info;
-
         loop {
             let rt = &*self.reftable.read().await;
             let done = self
                 .flush_meta_generic(rt, &self.refblock_cache, |off| {
-                    let rt_idx: u64 = off >> 3;
-                    let host_cls = (rt_idx << info.rb_index_shift) << info.cluster_bits();
-                    let k = HostCluster(host_cls);
-                    k.rb_slice_key(info)
+                    self.rb_slice_key_of_rt_off(off)
                 })
                 .await?;
             if done {
@@ -419,16 +436,9 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
 
     //// flush mapping cache
     pub(crate) async fn flush_mapping(&self, l1: &L1Table) -> Qcow2Result<()> {
-        let info = &self.info;
-
         loop {
             let done = self
-                .flush_meta_generic(l1, &self.l2cache, |off| {
-                    let l1_idx: u64 = off >> 3;
-                    let virt_addr = (l1_idx << info.l2_index_shift) << info.cluster_bits();
-                    let k = SplitGuestOffset(virt_addr);
-                    k.l2_slice_key(info)
-                })
+                .flush_meta_generic(l1, &self.l2cache, |off| self.l2_slice_key_of_l1_off(off))
                 .await?;
             if done {
                 break;
@@ -444,7 +454,6 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
 
     /// flush meta data in ram to disk
     pub async fn flush_meta(&self) -> Qcow2Result<()> {
-        let info = &self.info;
         let _flush_lock = self.flush_lock.lock().await;
 
         log::debug!("flush_meta: entry");
@@ -459,12 +468,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
             let l1 = &*self.l1table.read().await;
 
             let done = self
-                .flush_meta_generic(l1, &self.l2cache, |off| {
-                    let l1_idx: u64 = off >> 3;
-                    let virt_addr = (l1_idx << info.l2_index_shift) << info.cluster_bits();
-                    let k = SplitGuestOffset(virt_addr);
-                    k.l2_slice_key(info)
-                })
+                .flush_meta_generic(l1, &self.l2cache, |off| self.l2_slice_key_of_l1_off(off))
                 .await?;
             if done {
                 self.mark_need_flush(false);
