@@ -377,10 +377,6 @@ impl Table for RefBlock {
         self.__set(index, value.into_plain()).unwrap();
     }
 
-    fn set_with_return(&mut self, index: usize, value: Self::Entry) -> Qcow2Result<()> {
-        self.__set(index, value.into_plain())
-    }
-
     /// RefBlock is special, since RefBlockEntry is defined as u64
     fn byte_size(&self) -> usize {
         self.raw_data.len() * 8
@@ -461,30 +457,20 @@ mod tests {
         assert!(refblock.decrement(0).is_ok());
         assert_eq!(refblock.get(0).into_plain(), 0);
 
-        assert!(refblock.set_with_return(0, RefBlockEntry(255)).is_ok());
-        assert!(refblock.set_with_return(0, RefBlockEntry(1)).is_ok());
+        assert!(refblock.__set(0, 255).is_ok());
+        assert!(refblock.__set(0, 1).is_ok());
         assert_eq!(refblock.get(0).into_plain(), 1);
 
-        assert!(refblock.set_with_return(0, RefBlockEntry(256)).is_err());
-        assert!(refblock.set_with_return(0, RefBlockEntry(255)).is_ok());
+        assert!(refblock.__set(0, 256).is_err());
+        assert!(refblock.__set(0, 255).is_ok());
         assert_eq!(refblock.get(0).into_plain(), 255);
 
-        assert!(refblock
-            .set_with_return(0, RefBlockEntry(u16::MAX as u64 + 1))
-            .is_err());
-        assert!(refblock
-            .set_with_return(0, RefBlockEntry(u16::MAX as u64))
-            .is_err());
+        assert!(refblock.__set(0, u16::MAX as u64 + 1).is_err());
+        assert!(refblock.__set(0, u16::MAX as u64).is_err());
 
-        assert!(refblock
-            .set_with_return(0, RefBlockEntry(u32::MAX as u64 + 1))
-            .is_err());
-        assert!(refblock
-            .set_with_return(0, RefBlockEntry(u32::MAX as u64))
-            .is_err());
+        assert!(refblock.__set(0, u32::MAX as u64 + 1).is_err());
+        assert!(refblock.__set(0, u32::MAX as u64).is_err());
 
-        assert!(refblock
-            .set_with_return(0, RefBlockEntry(u64::MAX))
-            .is_err());
+        assert!(refblock.__set(0, u64::MAX).is_err());
     }
 }

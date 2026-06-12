@@ -141,11 +141,6 @@ pub trait Table: From<Qcow2IoBuf<Self::Entry>> {
     fn as_ptr(&self) -> *const u8;
     fn as_mut_ptr(&mut self) -> *mut u8;
 
-    fn set_with_return(&mut self, index: usize, value: Self::Entry) -> Qcow2Result<()> {
-        self.set(index, value);
-        Ok(())
-    }
-
     fn byte_size(&self) -> usize {
         self.entries() * size_of::<u64>()
     }
