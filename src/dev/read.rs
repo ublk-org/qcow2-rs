@@ -184,7 +184,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
 
     #[inline]
     async fn do_read(&self, entry: L2Entry, offset: u64, buf: &mut [u8]) -> Qcow2Result<usize> {
-        let off_in_cls = (offset as usize) & self.info.in_cluster_offset_mask;
+        let off_in_cls = self.info.in_cluster_offset(offset);
         let split = SplitGuestOffset(offset - (off_in_cls as u64));
         let mapping = entry.into_mapping(&self.info, &split);
 
@@ -274,7 +274,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
             let l2_entries = self.get_l2_entries(offset, len).await?;
 
             while len > 0 {
-                let in_cluster_offset = offset as usize & info.in_cluster_offset_mask;
+                let in_cluster_offset = info.in_cluster_offset(offset);
                 let curr_len = std::cmp::min(info.cluster_size() - in_cluster_offset, len);
                 let (iobuf, b) = remain.split_at_mut(curr_len);
                 remain = b;

@@ -160,7 +160,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         buf: &[u8],
     ) -> Qcow2Result<()> {
         let info = &self.info;
-        let off_in_cls = (virt_off & (info.in_cluster_offset_mask as u64)) as usize;
+        let off_in_cls = info.in_cluster_offset(virt_off);
         let may_cow = cow_mapping.is_some();
 
         let host_off = match mapping.cluster_offset {
@@ -645,7 +645,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
             let mut idx = 0;
             let l2_entries = self.populate_write_mappings(offset, len).await?;
             while len > 0 {
-                let in_cluster_offset = offset as usize & info.in_cluster_offset_mask;
+                let in_cluster_offset = info.in_cluster_offset(offset);
                 let curr_len = std::cmp::min(info.cluster_size() - in_cluster_offset, len);
                 let (iobuf, b) = remain.split_at(curr_len);
                 remain = b;
