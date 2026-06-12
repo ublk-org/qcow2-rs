@@ -77,7 +77,6 @@ impl RefTable {
     pub fn new(offset: Option<u64>, size: usize, bs_bits: u8) -> Self {
         let mut rt = RefTable::new_empty(offset, size);
 
-        rt.dirty_blocks = RefCell::new(VecDeque::new());
         rt.bs_bits = bs_bits;
         rt
     }

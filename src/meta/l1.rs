@@ -95,7 +95,6 @@ impl L1Table {
     pub fn new(offset: Option<u64>, data_size: usize, header_entries: u32, bs_bits: u8) -> Self {
         let mut l1 = L1Table::new_empty(offset, data_size);
         l1.header_entries = header_entries;
-        l1.dirty_blocks = RefCell::new(VecDeque::new());
         l1.bs_bits = bs_bits;
         l1
     }
