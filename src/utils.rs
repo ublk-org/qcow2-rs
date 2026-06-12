@@ -98,7 +98,7 @@ macro_rules! qcow2_setup_dev_fn {
             let (mut dev, backing) = qcow2_alloc_dev(&path, io, params).await?;
             match backing {
                 Some(back_path) => {
-                    let p = params.clone();
+                    let mut p = params.clone();
                     p.mark_backing_dev(Some(true));
                     let bdev = $fn_name(&back_path.as_path(), &p).await?;
                     dev.set_backing_dev(Box::new(bdev));
@@ -128,7 +128,7 @@ macro_rules! qcow2_setup_dev_fn_sync {
             let (mut dev, backing) = qcow2_alloc_dev_sync(&path, io, params)?;
             match backing {
                 Some(back_path) => {
-                    let p = params.clone();
+                    let mut p = params.clone();
                     p.mark_backing_dev(Some(true));
                     let bdev = $fn_name(&back_path.as_path(), &p)?;
                     dev.set_backing_dev(Box::new(bdev));

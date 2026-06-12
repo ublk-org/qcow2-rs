@@ -2,7 +2,6 @@ use crate::error::Qcow2Result;
 use crate::ops::*;
 #[rustversion::before(1.75)]
 use async_trait::async_trait;
-use nix::fcntl::{fallocate, FallocateFlags};
 use std::os::unix::io::AsRawFd;
 use std::path::Path;
 use tokio_uring::buf::{IoBuf, IoBufMut};
@@ -90,9 +89,7 @@ impl Qcow2IoUring {
             .unwrap();
 
         if dio {
-            unsafe {
-                libc::fcntl(file.as_raw_fd(), libc::F_SETFL, libc::O_DIRECT);
-            }
+            crate::ops::set_direct_io(file.as_raw_fd());
         }
         Qcow2IoUring { file }
     }
@@ -128,31 +125,9 @@ impl Qcow2IoOps for Qcow2IoUring {
     }
 
     async fn fallocate(&self, offset: u64, len: usize, flags: u32) -> Qcow2Result<()> {
-        // tokio-uring github fallocate
-        /*
-        let res = self
-            .file
-            .fallocate(offset, len.try_into().unwrap(), flags)
-            .await;
-        match res {
-            Err(_) => Err("tokio-uring fallocate failed".into()),
-            Ok(_) => Ok(()),
-        }*/
-
-        // the latest tokio-uring crate(0.4) doesn't support fallocate yet, so use
-        // sync nix fallocate() syscall
-        let f = if (flags & Qcow2OpsFlags::FALLOCATE_ZERO_RAGE) != 0 {
-            FallocateFlags::FALLOC_FL_PUNCH_HOLE | FallocateFlags::FALLOC_FL_ZERO_RANGE
-        } else {
-            FallocateFlags::FALLOC_FL_PUNCH_HOLE
-        };
-
-        Ok(fallocate(
-            self.file.as_raw_fd(),
-            f,
-            offset as libc::off_t,
-            len as libc::off_t,
-        )?)
+        // tokio-uring (0.5) still has no async fallocate, so fall back to the
+        // shared synchronous nix fallocate() syscall on the raw fd.
+        crate::ops::linux_punch_hole(self.file.as_raw_fd(), offset, len, flags)
     }
 
     async fn fsync(&self, _offset: u64, _len: usize, _flags: u32) -> Qcow2Result<()> {

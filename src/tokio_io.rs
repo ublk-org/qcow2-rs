@@ -3,8 +3,6 @@ use crate::error::Qcow2Result;
 use crate::ops::*;
 #[rustversion::before(1.75)]
 use async_trait::async_trait;
-#[cfg(target_os = "linux")]
-use nix::fcntl::{fallocate, FallocateFlags};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::os::fd::AsRawFd;
 use std::path::Path;
@@ -88,18 +86,7 @@ impl Qcow2IoOps for Qcow2IoTokio {
 
     #[cfg(target_os = "linux")]
     async fn fallocate(&self, offset: u64, len: usize, flags: u32) -> Qcow2Result<()> {
-        let f = if (flags & Qcow2OpsFlags::FALLOCATE_ZERO_RAGE) != 0 {
-            FallocateFlags::FALLOC_FL_PUNCH_HOLE | FallocateFlags::FALLOC_FL_ZERO_RANGE
-        } else {
-            FallocateFlags::FALLOC_FL_PUNCH_HOLE
-        };
-
-        Ok(fallocate(
-            self.fd,
-            f,
-            offset as libc::off_t,
-            len as libc::off_t,
-        )?)
+        crate::ops::linux_punch_hole(self.fd, offset, len, flags)
     }
 
     /// macOS hole-punch via `fcntl(F_PUNCHHOLE, &fpunchhole_t)` (available
@@ -108,7 +95,7 @@ impl Qcow2IoOps for Qcow2IoTokio {
     /// sub-block ranges return `EINVAL`. We treat `EINVAL`/`EOPNOTSUPP`/
     /// `ENOSYS` as soft fails and fall back to the zero-write path so
     /// callers still get the reads-as-zero guarantee they expect from
-    /// `FALLOCATE_ZERO_RAGE` semantics — the host file just doesn't shrink
+    /// `FALLOCATE_ZERO_RANGE` semantics — the host file just doesn't shrink
     /// for that one call.
     #[cfg(target_os = "macos")]
     async fn fallocate(&self, offset: u64, len: usize, _flags: u32) -> Qcow2Result<()> {
@@ -128,9 +115,7 @@ impl Qcow2IoOps for Qcow2IoTokio {
         let err = std::io::Error::last_os_error();
         match err.raw_os_error() {
             Some(libc::EINVAL) | Some(libc::EOPNOTSUPP) | Some(libc::ENOSYS) => {
-                let mut data = crate::helpers::Qcow2IoBuf::<u8>::new(len);
-                data.zero_buf();
-                self.write_at(offset, &data).await
+                self.write_at(offset, &crate::ops::zeroed_io_buf(len)).await
             }
             _ => Err(err.into()),
         }
@@ -138,10 +123,7 @@ impl Qcow2IoOps for Qcow2IoTokio {
 
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     async fn fallocate(&self, offset: u64, len: usize, _flags: u32) -> Qcow2Result<()> {
-        let mut data = crate::helpers::Qcow2IoBuf::<u8>::new(len);
-
-        data.zero_buf();
-        self.write_at(offset, &data).await
+        self.write_at(offset, &crate::ops::zeroed_io_buf(len)).await
     }
 
     async fn fsync(&self, _offset: u64, _len: usize, _flags: u32) -> Qcow2Result<()> {

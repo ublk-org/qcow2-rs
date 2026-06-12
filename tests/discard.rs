@@ -102,10 +102,12 @@ mod discard {
             let params = qcow2_default_params!(false, false);
             let dev = qcow2_setup_dev_tokio(&path, &params).await.unwrap();
 
+            #[cfg(unix)]
             let blocks_before_write = host_blocks(&path);
             let buf = nonzero_buf(CLUSTER_SIZE, 0xAB);
             dev.write_at(&buf, 0).await.unwrap();
             dev.flush_meta().await.unwrap();
+            #[cfg(unix)]
             let blocks_after_write = host_blocks(&path);
             #[cfg(unix)]
             assert!(
@@ -115,6 +117,7 @@ mod discard {
 
             dev.discard(0, CLUSTER_SIZE as u64).await.unwrap();
             dev.flush_meta().await.unwrap();
+            #[cfg(unix)]
             let blocks_after_discard = host_blocks(&path);
             #[cfg(unix)]
             assert!(

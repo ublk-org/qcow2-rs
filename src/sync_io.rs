@@ -2,42 +2,26 @@ use crate::error::Qcow2Result;
 use crate::ops::*;
 #[rustversion::before(1.75)]
 use async_trait::async_trait;
-#[cfg(target_os = "linux")]
-use nix::fcntl::{fallocate, FallocateFlags};
-use std::cell::RefCell;
 use std::fs::{File, OpenOptions};
 use std::os::unix::io::AsRawFd;
 use std::path::Path;
 
 #[derive(Debug)]
 pub struct Qcow2IoSync {
-    _file: RefCell<File>,
+    _file: File,
     fd: i32,
 }
 
 impl Qcow2IoSync {
     pub fn new(path: &Path, ro: bool, dio: bool) -> Qcow2IoSync {
-        #[cfg(target_os = "macos")]
-        fn set_dio(_file: &File) {}
-
-        #[cfg(not(target_os = "macos"))]
-        fn set_dio(file: &File) {
-            unsafe {
-                libc::fcntl(file.as_raw_fd(), libc::F_SETFL, libc::O_DIRECT);
-            }
-        }
-
         let file = OpenOptions::new().read(true).write(!ro).open(path).unwrap();
+        let fd = file.as_raw_fd();
 
         if dio {
-            set_dio(&file);
+            crate::ops::set_direct_io(fd);
         }
 
-        let fd = file.as_raw_fd();
-        Qcow2IoSync {
-            _file: RefCell::new(file),
-            fd,
-        }
+        Qcow2IoSync { _file: file, fd }
     }
 
     #[inline(always)]
@@ -105,25 +89,11 @@ impl Qcow2IoOps for Qcow2IoSync {
 
     #[cfg(target_os = "linux")]
     async fn fallocate(&self, offset: u64, len: usize, flags: u32) -> Qcow2Result<()> {
-        let f = if (flags & Qcow2OpsFlags::FALLOCATE_ZERO_RAGE) != 0 {
-            FallocateFlags::FALLOC_FL_PUNCH_HOLE | FallocateFlags::FALLOC_FL_ZERO_RANGE
-        } else {
-            FallocateFlags::FALLOC_FL_PUNCH_HOLE
-        };
-
-        Ok(fallocate(
-            self.fd,
-            f,
-            offset as libc::off_t,
-            len as libc::off_t,
-        )?)
+        crate::ops::linux_punch_hole(self.fd, offset, len, flags)
     }
     #[cfg(not(target_os = "linux"))]
     async fn fallocate(&self, offset: u64, len: usize, _flags: u32) -> Qcow2Result<()> {
-        let mut data = crate::helpers::Qcow2IoBuf::<u8>::new(len);
-
-        data.zero_buf();
-        self.write_at(offset, &data).await
+        self.write_at(offset, &crate::ops::zeroed_io_buf(len)).await
     }
 
     #[cfg(not(target_os = "windows"))]
