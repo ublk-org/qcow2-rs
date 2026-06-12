@@ -109,28 +109,27 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         }
         let compressed_data = &_compressed_data[pad..(pad + compressed_length)];
 
-        let mut dec_ox = DecompressorOxide::new();
-        if buf.len() == info.cluster_size() {
-            let (status, _read, _written) = inflate(&mut dec_ox, compressed_data, buf, 0, 0);
-            if status != TINFLStatus::Done && status != TINFLStatus::HasMoreOutput {
-                return Err(format!(
-                    "Failed to decompress cluster (host offset 0x{compressed_offset:x}+{compressed_length}): {status:?}"
-                )
-                .into());
-            }
-        } else {
-            let mut uncompressed_data = vec![0; info.cluster_size()];
-
-            let (status, _read, _written) =
-                inflate(&mut dec_ox, compressed_data, &mut uncompressed_data, 0, 0);
-            if status != TINFLStatus::Done && status != TINFLStatus::HasMoreOutput {
-                return Err(format!(
-                    "Failed to decompress cluster (host offset 0x{compressed_offset:x}+{compressed_length}): {status:?}"
-                )
-                .into());
-            }
-            buf.copy_from_slice(&uncompressed_data[off_in_cls..(off_in_cls + buf.len())]);
+        // inflate straight into `buf` when it covers the whole cluster,
+        // otherwise into a temporary cluster buffer and copy the wanted part
+        let mut whole_cluster =
+            (buf.len() != info.cluster_size()).then(|| vec![0; info.cluster_size()]);
+        let dst: &mut [u8] = match whole_cluster.as_deref_mut() {
+            Some(tmp) => tmp,
+            None => buf,
         };
+
+        let mut dec_ox = DecompressorOxide::new();
+        let (status, _read, _written) = inflate(&mut dec_ox, compressed_data, dst, 0, 0);
+        if status != TINFLStatus::Done && status != TINFLStatus::HasMoreOutput {
+            return Err(format!(
+                "Failed to decompress cluster (host offset 0x{compressed_offset:x}+{compressed_length}): {status:?}"
+            )
+            .into());
+        }
+
+        if let Some(tmp) = whole_cluster {
+            buf.copy_from_slice(&tmp[off_in_cls..(off_in_cls + buf.len())]);
+        }
 
         Ok(buf.len())
     }
