@@ -183,14 +183,6 @@ impl Qcow2Info {
         (entries * size_of::<u64>() + bs - 1) & !(bs - 1)
     }
 
-    #[allow(dead_code)]
-    #[inline(always)]
-    pub(crate) fn max_l1_size(&self) -> usize {
-        let entries = self.max_l1_entries();
-
-        Self::__max_l1_size(entries, 1 << self.block_size_shift)
-    }
-
     pub(crate) fn __max_refcount_table_size(
         size: u64,
         cluster_size: usize,

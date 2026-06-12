@@ -28,9 +28,6 @@ impl_entry_display_trait!(L1Entry);
 pub struct L1Entry(u64);
 
 impl L1Entry {
-    const DIRTY: u64 = 0x1;
-    const NEW: u64 = 0x2;
-
     pub fn l2_offset(&self) -> u64 {
         self.0 & 0x00ff_ffff_ffff_fe00u64
     }

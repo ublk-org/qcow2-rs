@@ -15,8 +15,6 @@ impl_entry_display_trait!(RefBlockEntry);
 pub struct RefTableEntry(pub u64);
 
 impl RefTableEntry {
-    const DIRTY: u64 = 0x1;
-    const NEW: u64 = 0x2;
     pub fn refblock_offset(&self) -> u64 {
         self.0 & 0xffff_ffff_ffff_fe00u64
     }
@@ -317,19 +315,6 @@ impl RefBlock {
             .checked_sub(1)
             .ok_or("Cannot decrease refcount below 0")?;
         self.__set(index, val)
-    }
-
-    fn byte_indices(&self, index: usize) -> std::ops::RangeInclusive<usize> {
-        match self.refcount_order {
-            0 => index / 8..=index / 8,
-            1 => index / 4..=index / 4,
-            2 => index / 2..=index / 2,
-            3 => index..=index,
-            4 => index * 2..=index * 2 + 1,
-            5 => index * 4..=index * 4 + 3,
-            6 => index * 8..=index * 8 + 7,
-            _ => unreachable!(),
-        }
     }
 
     fn check_if_free(&self, r: std::ops::Range<usize>) -> bool {
