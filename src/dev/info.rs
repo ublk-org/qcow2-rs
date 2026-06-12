@@ -48,37 +48,37 @@ impl Qcow2Info {
             .ok_or_else(|| format!("cluster_bits={cluster_shift} is too large"))?;
         let refcount_order: u8 = h.refcount_order().try_into().unwrap();
 
-        //at least two l2 caches
-        let (l2_slice_bits, l2_cache_cnt) = match p.l2_cache {
-            Some((b, s)) => {
-                debug_assert!(b >= block_size_shift && u32::from(b) <= cluster_shift as u32);
-                assert!((s >> b) >= 2);
-                (b, s >> b)
-            }
-            None => {
-                let mapping_bytes = std::cmp::min(h.size() >> (cluster_shift - 3), 32 << 20);
-                let bits = 12_u8;
-                let cnt = std::cmp::max((mapping_bytes as usize) >> bits, 2);
+        // always keep at least two cache slices
+        fn cache_geometry(
+            param: Option<(u8, usize)>,
+            default_bytes: usize,
+            bs_bits: u8,
+            cluster_shift: u8,
+        ) -> (u8, usize) {
+            match param {
+                Some((b, s)) => {
+                    debug_assert!(b >= bs_bits && u32::from(b) <= cluster_shift as u32);
+                    assert!((s >> b) >= 2);
+                    (b, s >> b)
+                }
+                None => {
+                    let bits = 12_u8;
+                    let cnt = std::cmp::max(default_bytes >> bits, 2);
 
-                (bits, cnt)
+                    (bits, cnt)
+                }
             }
-        };
+        }
 
-        //at least two rb caches
-        let (rb_slice_bits, rb_cache_cnt) = match p.rb_cache {
-            Some((b, s)) => {
-                debug_assert!(b >= block_size_shift && u32::from(b) <= cluster_shift as u32);
-                assert!((s >> b) >= 2);
-                (b, s >> b)
-            }
-            None => {
-                let mapping_bytes = 256 << 10;
-                let bits = 12_u8;
-                let cnt = std::cmp::max((mapping_bytes as usize) >> bits, 2);
-
-                (bits, cnt)
-            }
-        };
+        let l2_mapping_bytes = std::cmp::min(h.size() >> (cluster_shift - 3), 32 << 20) as usize;
+        let (l2_slice_bits, l2_cache_cnt) = cache_geometry(
+            p.l2_cache,
+            l2_mapping_bytes,
+            block_size_shift,
+            cluster_shift,
+        );
+        let (rb_slice_bits, rb_cache_cnt) =
+            cache_geometry(p.rb_cache, 256 << 10, block_size_shift, cluster_shift);
 
         //todo: support extended l2
         let l2_entries = cluster_size / std::mem::size_of::<u64>();
