@@ -335,9 +335,8 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
                     );
                     match l2_e.compressed_range(info.cluster_bits() as u32) {
                         Some((off, length)) => {
-                            let mask = (!info.in_cluster_offset_mask) as u64;
-                            let start = off & mask;
-                            let end = (off + (length as u64)) & mask;
+                            let start = info.cluster_round_down(off);
+                            let end = info.cluster_round_down(off + (length as u64));
 
                             let cnt = (((end - start) as usize) >> info.cluster_bits()) + 1;
                             self.free_clusters(start, cnt).await?
@@ -566,18 +565,15 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         len: usize,
     ) -> Qcow2Result<Vec<L2Entry>> {
         let info = &self.info;
-        let cls_size = info.cluster_size() as u64;
-        let start = virt_off & !(cls_size - 1);
-        let end = (virt_off + (len as u64) + cls_size - 1) & !(cls_size - 1);
+        let start = info.cluster_round_down(virt_off);
+        let end = info.cluster_round_up(virt_off + len as u64);
 
-        let entries = self.make_multiple_write_mappings(start, end).await?;
-
-        Ok(entries)
+        self.make_multiple_write_mappings(start, end).await
     }
 
     async fn do_write(&self, l2_e: L2Entry, off: u64, buf: &[u8]) -> Qcow2Result<()> {
         let info = &self.info;
-        let split = SplitGuestOffset(off & !(info.in_cluster_offset_mask as u64));
+        let split = SplitGuestOffset(info.cluster_round_down(off));
         let mapping = l2_e.into_mapping(info, &split);
 
         log::trace!(

@@ -10,7 +10,7 @@ use super::*;
 
 impl<T: Qcow2IoOps> Qcow2Dev<T> {
     pub async fn get_mapping(&self, virtual_offset: u64) -> Qcow2Result<Mapping> {
-        let split = SplitGuestOffset(virtual_offset & !(self.info.in_cluster_offset_mask as u64));
+        let split = SplitGuestOffset(self.info.cluster_round_down(virtual_offset));
         let entry = self.get_l2_entry(virtual_offset).await?;
 
         Ok(entry.into_mapping(&self.info, &split))
@@ -42,9 +42,8 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
     #[inline]
     async fn get_l2_entries(&self, off: u64, len: usize) -> Qcow2Result<Vec<L2Entry>> {
         let info = &self.info;
-        let start = off & (!(info.in_cluster_offset_mask) as u64);
-        let end = (off + ((len + info.cluster_size()) as u64) - 1)
-            & (!(info.in_cluster_offset_mask) as u64);
+        let start = info.cluster_round_down(off);
+        let end = info.cluster_round_up(off + len as u64);
         let mut entries = Vec::new();
         let mut voff = start;
 

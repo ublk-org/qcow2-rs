@@ -50,8 +50,8 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         }
 
         // Round inward to whole-cluster boundaries.
-        let start = virtual_offset.div_ceil(cluster_size) * cluster_size;
-        let stop = end & !(cluster_size - 1);
+        let start = info.cluster_round_up(virtual_offset);
+        let stop = info.cluster_round_down(end);
         if start >= stop {
             return Ok(());
         }

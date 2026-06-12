@@ -136,6 +136,18 @@ impl Qcow2Info {
         offset as usize & self.in_cluster_offset_mask
     }
 
+    /// Round `offset` down to the start of its cluster
+    #[inline(always)]
+    pub(crate) fn cluster_round_down(&self, offset: u64) -> u64 {
+        offset & !(self.in_cluster_offset_mask as u64)
+    }
+
+    /// Round `offset` up to the next cluster boundary
+    #[inline(always)]
+    pub(crate) fn cluster_round_up(&self, offset: u64) -> u64 {
+        self.cluster_round_down(offset + self.in_cluster_offset_mask as u64)
+    }
+
     #[inline(always)]
     pub fn cluster_size(&self) -> usize {
         1 << self.cluster_shift
