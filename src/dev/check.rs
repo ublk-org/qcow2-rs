@@ -6,6 +6,15 @@ use futures_locks::RwLock as AsyncRwLock;
 use std::collections::HashMap;
 use std::ops::RangeInclusive;
 
+/// Collect the cluster ranges built by `add_used_cluster_to_set` into a
+/// sorted, deduplicated list
+fn sorted_ranges(set: &HashMap<u64, RangeInclusive<u64>>) -> Vec<&RangeInclusive<u64>> {
+    let mut res: Vec<_> = set.values().collect();
+    res.sort_by_key(|range| *range.start());
+    res.dedup();
+    res
+}
+
 impl<T: Qcow2IoOps> Qcow2Dev<T> {
     fn add_used_cluster_to_set(ranges: &mut HashMap<u64, RangeInclusive<u64>>, num: u64) {
         let mut start = num;
@@ -146,38 +155,23 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
     {
         let mut set: HashMap<u64, RangeInclusive<u64>> = HashMap::new();
         self.add_refcount_table_clusters(&mut set).await?;
-        let mut this_res: Vec<_> = set.values().collect();
-        this_res.sort_by_key(|range| *range.start());
-        this_res.dedup();
-        cls_usage("refcount_table", &this_res, None);
+        cls_usage("refcount_table", &sorted_ranges(&set), None);
 
         let mut set: HashMap<u64, RangeInclusive<u64>> = HashMap::new();
         self.add_l1_table_clusters(&mut set).await?;
-        let mut this_res: Vec<_> = set.values().collect();
-        this_res.sort_by_key(|range| *range.start());
-        this_res.dedup();
-        cls_usage("l1_table", &this_res, None);
+        cls_usage("l1_table", &sorted_ranges(&set), None);
 
         let mut set: HashMap<u64, RangeInclusive<u64>> = HashMap::new();
         self.add_table_clusters(&self.l1table, &mut set).await;
-        let mut this_res: Vec<_> = set.values().collect();
-        this_res.sort_by_key(|range| *range.start());
-        this_res.dedup();
-        cls_usage("l2_tables", &this_res, None);
+        cls_usage("l2_tables", &sorted_ranges(&set), None);
 
         let mut set: HashMap<u64, RangeInclusive<u64>> = HashMap::new();
         self.add_table_clusters(&self.reftable, &mut set).await;
-        let mut this_res: Vec<_> = set.values().collect();
-        this_res.sort_by_key(|range| *range.start());
-        this_res.dedup();
-        cls_usage("refblock_tables", &this_res, None);
+        cls_usage("refblock_tables", &sorted_ranges(&set), None);
 
         let mut set: HashMap<u64, RangeInclusive<u64>> = HashMap::new();
         let stat_res = self.add_data_clusters(&mut set).await?;
-        let mut this_res: Vec<_> = set.values().collect();
-        this_res.sort_by_key(|range| *range.start());
-        this_res.dedup();
-        cls_usage("data", &this_res, Some(stat_res));
+        cls_usage("data", &sorted_ranges(&set), Some(stat_res));
 
         Ok(())
     }
@@ -197,9 +191,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         self.add_table_clusters(&self.reftable, &mut set).await;
         let _ = self.add_data_clusters(&mut set).await?;
 
-        let mut result: Vec<_> = set.values().collect();
-        result.sort_by_key(|range| *range.start());
-        result.dedup();
+        let result = sorted_ranges(&set);
 
         for range in &result {
             log::debug!("{:?}", range);
