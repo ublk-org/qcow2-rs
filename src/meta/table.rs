@@ -159,10 +159,9 @@ pub trait Table: From<Qcow2IoBuf<Self::Entry>> {
     }
 
     fn new_empty(offset: Option<u64>, size: usize) -> Self {
-        let table = Qcow2IoBuf::<Self::Entry>::new(size);
-        unsafe {
-            std::ptr::write_bytes(table.as_mut_ptr(), 0, table.len());
-        }
+        let mut table = Qcow2IoBuf::<Self::Entry>::new(size);
+        table.zero_buf();
+
         let mut table: Self = table.into();
         table.set_offset(offset);
 
