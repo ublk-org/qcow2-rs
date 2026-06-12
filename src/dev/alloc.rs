@@ -181,11 +181,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         log::info!("free_clusters start {:x} num {}", host_cluster, count);
         while count > 0 {
             let cls = HostCluster(host_cluster);
-            let mut rt_e = self.get_reftable_entry(cls.rt_index(info)).await;
-
-            if rt_e.is_zero() {
-                rt_e = self.get_reftable_entry(cls.rt_index(info)).await;
-            }
+            let rt_e = self.get_reftable_entry(cls.rt_index(info)).await;
 
             let rb_handle = match self.get_refblock(&cls, &rt_e).await {
                 Ok(handle) => handle,
