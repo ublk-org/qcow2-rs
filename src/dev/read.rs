@@ -44,7 +44,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         let info = &self.info;
         let start = info.cluster_round_down(off);
         let end = info.cluster_round_up(off + len as u64);
-        let mut entries = Vec::new();
+        let mut entries = Vec::with_capacity(((end - start) as usize) >> info.cluster_bits());
         let mut voff = start;
 
         while voff < end {

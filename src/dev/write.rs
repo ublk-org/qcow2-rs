@@ -518,7 +518,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         end: u64,
     ) -> Qcow2Result<Vec<L2Entry>> {
         let info = &self.info;
-        let mut l2_entries = Vec::new();
+        let mut l2_entries = Vec::with_capacity(((end - start) as usize) >> info.cluster_bits());
         while start < end {
             // optimize in future by getting l2 entries at batch
             let entry = self.get_l2_entry(start).await?;
