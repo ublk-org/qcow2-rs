@@ -122,7 +122,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         &self,
         l1_e: &L1Entry,
         split: &SplitGuestOffset,
-    ) -> Qcow2Result<AsyncLruCacheEntry<AsyncRwLock<L2Table>>> {
+    ) -> Qcow2Result<AsyncLruCacheEntry<L2TableHandle>> {
         let info = &self.info;
         let key = split.l2_slice_key(info);
         let l2_cache = &self.l2cache;
@@ -152,7 +152,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
     pub(crate) async fn get_l2_slice(
         &self,
         split: &SplitGuestOffset,
-    ) -> Qcow2Result<AsyncLruCacheEntry<AsyncRwLock<L2Table>>> {
+    ) -> Qcow2Result<AsyncLruCacheEntry<L2TableHandle>> {
         let key = split.l2_slice_key(&self.info);
 
         match self.l2cache.get(key) {
