@@ -473,7 +473,6 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
                 .await?
             {
                 Some(off) => {
-                    //println!("alloc: done {} off {} cnt {}", done, off.0, off.1);
                     if done == 0 {
                         out_off = off.0;
                     } else {
