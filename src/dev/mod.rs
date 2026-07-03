@@ -80,10 +80,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
 
         let l2_cache_cnt = info.l2_cache_cnt as usize;
         let rb_cache_cnt = info.rb_cache_cnt as usize;
-        let l1_size = Qcow2Info::__max_l1_size(
-            Qcow2Info::get_max_l1_entries(h.size(), h.cluster_bits().try_into().unwrap()),
-            1 << bs_shift,
-        );
+        let l1_size = Qcow2Info::__max_l1_size(info.max_l1_entries(), 1 << bs_shift);
         let rt_size = h.reftable_clusters() << h.cluster_bits();
         let l1_entries = h.l1_table_entries() as u32;
 
