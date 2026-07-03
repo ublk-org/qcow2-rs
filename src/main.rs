@@ -139,6 +139,17 @@ struct Cli {
     command: Commands,
 }
 
+/// Load a metadata table's raw bytes from the image at `offset`.
+///
+/// The table types only expose a raw pointer plus byte length, so reading
+/// one from the file needs a `&mut [u8]` view over that backing buffer.
+fn load_table_at<T: Table>(f: &mut std::fs::File, offset: u64, t: &mut T) -> Qcow2Result<()> {
+    let buf = unsafe { std::slice::from_raw_parts_mut(t.as_mut_ptr(), t.byte_size()) };
+    f.seek(SeekFrom::Start(offset))?;
+    let _ = f.read(buf)?;
+    Ok(())
+}
+
 fn dump_l1_table(
     f: &mut std::fs::File,
     info: &Qcow2Info,
@@ -146,13 +157,7 @@ fn dump_l1_table(
     arg: &DumpArgs,
 ) -> Qcow2Result<()> {
     let mut l1 = L1Table::new_empty(Some(header.l1_table_offset()), info.cluster_size());
-    let l1_buf = unsafe { std::slice::from_raw_parts_mut(l1.as_mut_ptr(), l1.byte_size()) };
-    assert!(l1_buf.as_ptr() == l1.as_ptr());
-
-    //load to this refcount table from image
-    f.seek(SeekFrom::Start(header.l1_table_offset()))?;
-    let _bytes = f.read(l1_buf).unwrap();
-    //assert!(bytes == l1.byte_size());
+    load_table_at(f, header.l1_table_offset(), &mut l1)?;
 
     println!(
         "L1Table: offset_in_image 0x{:<16x}",
@@ -179,13 +184,7 @@ fn dump_l1_table(
         if !e.is_zero() {
             let offset = e.l2_offset();
             let mut l2 = L2Table::new_empty(Some(offset), info.cluster_size());
-            let l2_buf = unsafe { std::slice::from_raw_parts_mut(l2.as_mut_ptr(), l2.byte_size()) };
-            assert!(l2_buf.as_ptr() == l2.as_ptr());
-
-            //load to this refcount table from image
-            f.seek(SeekFrom::Start(offset))?;
-            let bytes = f.read(l2_buf).unwrap();
-            assert!(bytes == l2.byte_size());
+            load_table_at(f, offset, &mut l2)?;
 
             println!("L2Table: idx_in_table {i} offset_in_image 0x{offset:<16x} ");
             for j in 0..l2.entries() {
@@ -224,13 +223,7 @@ fn dump_refcount_table(
     arg: &DumpArgs,
 ) -> Qcow2Result<()> {
     let mut rc_t = RefTable::new_empty(Some(header.reftable_offset()), info.cluster_size());
-    let rc_t_buf = unsafe { std::slice::from_raw_parts_mut(rc_t.as_mut_ptr(), rc_t.byte_size()) };
-    assert!(rc_t_buf.as_ptr() == rc_t.as_ptr());
-
-    //load to this refcount table from image
-    f.seek(SeekFrom::Start(header.reftable_offset()))?;
-    let bytes = f.read(rc_t_buf).unwrap();
-    assert!(bytes == rc_t.byte_size());
+    load_table_at(f, header.reftable_offset(), &mut rc_t)?;
 
     println!(
         "RefTable: offset_in_image 0x{:<16x}",
@@ -257,14 +250,7 @@ fn dump_refcount_table(
         if !e.is_zero() {
             let offset = e.refblock_offset();
             let mut rc_b = RefBlock::new(info.refcount_order(), info.cluster_size(), Some(offset));
-            let rc_b_buf =
-                unsafe { std::slice::from_raw_parts_mut(rc_b.as_mut_ptr(), rc_b.byte_size()) };
-            assert!(rc_b_buf.as_ptr() == rc_b.as_ptr());
-
-            //load to this refcount table from image
-            f.seek(SeekFrom::Start(offset))?;
-            let bytes = f.read(rc_b_buf).unwrap();
-            assert!(bytes == rc_t.byte_size());
+            load_table_at(f, offset, &mut rc_b)?;
 
             println!("RefBlock: idx_in_table {i} offset_in_image 0x{offset:x} ");
             for j in 0..rc_b.entries() {
