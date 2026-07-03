@@ -379,14 +379,11 @@ impl L2Table {
             ),
         );
 
-        if let Some((a_offset, a_count)) = allocation {
-            if a_offset == host_cluster && a_count == 1 {
-                None
-            } else {
-                allocation
-            }
-        } else {
-            None
+        // The old allocation is reused (not leaked) when it is exactly the
+        // single cluster we just mapped.
+        match allocation {
+            Some((a_offset, 1)) if a_offset == host_cluster => None,
+            other => other,
         }
     }
 
