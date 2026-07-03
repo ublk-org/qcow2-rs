@@ -15,7 +15,7 @@ pub fn run_shell_cmd(p: &str) {
     //println!("Run shell command {}", p);
     let pp = p.to_string();
     let tokens: Vec<&str> = pp.split(' ').collect();
-    let output = Command::new(&tokens[0])
+    let output = Command::new(tokens[0])
         .args(&tokens[1..])
         .output()
         .expect("Failed to execute process");
@@ -23,7 +23,7 @@ pub fn run_shell_cmd(p: &str) {
     if !output.status.success() {
         // Print error message if the command failed
         let error = String::from_utf8_lossy(&output.stderr);
-        eprintln!("Command failed with error:\n{}", error);
+        eprintln!("Command failed with error:\n{error}");
         panic!();
     }
 }
@@ -33,7 +33,7 @@ pub fn calculate_raw_md5(file_path: &str, off: u64, len: usize) -> String {
     let mut buffer = vec![0_u8; len];
 
     file.seek(SeekFrom::Start(off)).unwrap();
-    file.read(&mut buffer).unwrap();
+    file.read_exact(&mut buffer).unwrap();
 
     hex_digest(Algorithm::MD5, &buffer)
 }
@@ -48,7 +48,7 @@ pub fn make_rand_raw_img(size: u64, cls_bits: usize) -> tempfile::NamedTempFile 
         let mut rng = rand::thread_rng();
         rng.fill(&mut buf[..]);
         file.seek(SeekFrom::Start(off)).unwrap();
-        file.write(&buf).unwrap();
+        file.write_all(&buf).unwrap();
     }
 
     tmp_inp
@@ -86,12 +86,12 @@ pub fn make_compressed_qcow2_img(
     {
         let mut file = std::fs::File::open(&binding).unwrap();
         let mut buf = vec![0_u8; buf_len];
-        file.read(&mut buf).unwrap();
+        file.read_exact(&mut buf).unwrap();
 
         let mut file = std::fs::File::create(tmp_inp.path()).unwrap();
         for off in (0..size).step_by(buf_len) {
             file.seek(SeekFrom::Start(off)).unwrap();
-            file.write(&buf).unwrap();
+            file.write_all(&buf).unwrap();
         }
     }
 
@@ -149,16 +149,16 @@ pub async fn test_qcow2_dev_write_verify<T: Qcow2IoOps + 'static>(
     for (off, len) in input {
         let d = dev.clone();
         fv.push(local.spawn_local(async move {
-            let mut wbuf = Qcow2IoBuf::<u8>::new(len as usize);
+            let mut wbuf = Qcow2IoBuf::<u8>::new(len);
 
             let mut rng = rand::thread_rng();
             rng.fill(&mut wbuf[..]);
 
-            println!("write at {:x}/{}..", off, len);
+            println!("write at {off:x}/{len}..");
             d.write_at(&wbuf, off).await.unwrap();
-            println!("write at {:x}/{}..done", off, len);
+            println!("write at {off:x}/{len}..done");
 
-            let mut rbuf = Qcow2IoBuf::<u8>::new(len as usize);
+            let mut rbuf = Qcow2IoBuf::<u8>::new(len);
 
             d.read_at(&mut rbuf, off).await.unwrap();
 
@@ -199,17 +199,17 @@ pub async fn test_cow_write(
     let mut rng = rand::thread_rng();
     rng.fill(&mut buf[..]);
     let buf_md5 = hex_digest(Algorithm::MD5, &buf);
-    dev.write_at(&mut buf, off).await.unwrap();
+    dev.write_at(&buf, off).await.unwrap();
     dev.flush_meta().await.unwrap();
     dev.check().await.unwrap();
 
     //check if written data is correct
-    let qcow2_sum = calculate_qcow2_data_md5(&qcow2_img, off, buf_size as u64).await;
+    let qcow2_sum = calculate_qcow2_data_md5(qcow2_img, off, buf_size as u64).await;
     assert!(qcow2_sum == buf_md5);
 
     //check if the beginning data is read correctly
     let raw_sum = calculate_raw_md5(rawf.path().to_str().unwrap(), 0, off as usize);
-    let qcow2_sum = calculate_qcow2_data_md5(&qcow2_img, 0, off).await;
+    let qcow2_sum = calculate_qcow2_data_md5(qcow2_img, 0, off).await;
     assert!(qcow2_sum == raw_sum);
 
     //check if the tail data is read correctly
@@ -219,11 +219,6 @@ pub async fn test_cow_write(
         right_off,
         (size - right_off).try_into().unwrap(),
     );
-    let qcow2_sum = calculate_qcow2_data_md5(
-        &qcow2_img,
-        right_off,
-        (size - right_off).try_into().unwrap(),
-    )
-    .await;
+    let qcow2_sum = calculate_qcow2_data_md5(qcow2_img, right_off, size - right_off).await;
     assert!(qcow2_sum == raw_sum);
 }

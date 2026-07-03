@@ -158,10 +158,10 @@ mod tests {
 
         let mut l1 = L1Table::new_empty(Some(cluster_size), 4096);
         assert!(l1.entries() == (size / core::mem::size_of::<u64>()));
-        assert!(l1.as_ptr() != std::ptr::null());
+        assert!(!l1.as_ptr().is_null());
 
         let entry = l1.get(0);
-        assert!(entry.is_zero() == true);
+        assert!(entry.is_zero());
 
         let l2_offset = cluster_size * 3;
         l1.set(0, L1Entry(l2_offset));

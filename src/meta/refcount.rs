@@ -371,10 +371,10 @@ mod tests {
 
         let mut rc = RefTable::new_empty(Some(cluster_size), 4096);
         assert!(rc.entries() == (size / core::mem::size_of::<u64>()));
-        assert!(rc.as_ptr() != std::ptr::null());
+        assert!(!rc.as_ptr().is_null());
 
         let entry = rc.get(0);
-        assert!(entry.is_zero() == true);
+        assert!(entry.is_zero());
 
         let rcb_offset = cluster_size * 3;
         rc.set(0, RefTableEntry(rcb_offset));
@@ -396,7 +396,7 @@ mod tests {
 
         let mut rc_b = RefBlock::new(refcount_order, size, Some(2 * cluster_size));
         assert!(rc_b.entries() == entries);
-        assert!(rc_b.as_ptr() != std::ptr::null());
+        assert!(!rc_b.as_ptr().is_null());
 
         for i in 0..entries {
             let entry = rc_b.get(i).into_plain();

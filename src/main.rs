@@ -187,10 +187,7 @@ fn dump_l1_table(
             let bytes = f.read(l2_buf).unwrap();
             assert!(bytes == l2.byte_size());
 
-            println!(
-                "L2Table: idx_in_table {} offset_in_image 0x{:<16x} ",
-                i, offset
-            );
+            println!("L2Table: idx_in_table {i} offset_in_image 0x{offset:<16x} ");
             for j in 0..l2.entries() {
                 let e = l2.get(j);
 
@@ -269,10 +266,7 @@ fn dump_refcount_table(
             let bytes = f.read(rc_b_buf).unwrap();
             assert!(bytes == rc_t.byte_size());
 
-            println!(
-                "RefBlock: idx_in_table {} offset_in_image 0x{:x} ",
-                i, offset
-            );
+            println!("RefBlock: idx_in_table {i} offset_in_image 0x{offset:x} ");
             for j in 0..rc_b.entries() {
                 let e = rc_b.get(j);
 
@@ -306,7 +300,7 @@ fn __dump_header(f: &PathBuf, h: &Qcow2Header) {
             0 => "no encryption".to_string(),
             1 => "AES encryption".to_string(),
             2 => "LUKS encryption".to_string(),
-            x => format!("{} ?", x),
+            x => format!("{x} ?"),
         }
     );
     if h.header_length() >= 104 {
@@ -315,7 +309,7 @@ fn __dump_header(f: &PathBuf, h: &Qcow2Header) {
             match h.compression_type() {
                 0 => "zlib".to_string(),
                 1 => "zstd".to_string(),
-                x => format!("{} ?", x),
+                x => format!("{x} ?"),
             }
         );
     }
@@ -342,17 +336,17 @@ fn __dump_header(f: &PathBuf, h: &Qcow2Header) {
     println!("\t features:");
     for i in 0..4 {
         if let Some(f) = h.feature_name(Qcow2FeatureType::Incompatible, i) {
-            println!("\t\t {}", f);
+            println!("\t\t {f}");
         }
     }
     for i in 0..1 {
         if let Some(f) = h.feature_name(Qcow2FeatureType::Compatible, i) {
-            println!("\t\t {}", f);
+            println!("\t\t {f}");
         }
     }
     for i in 0..2 {
         if let Some(f) = h.feature_name(Qcow2FeatureType::Autoclear, i) {
-            println!("\t\t {}", f);
+            println!("\t\t {f}");
         }
     }
 }
@@ -421,11 +415,10 @@ fn format_qcow2(args: FormatArgs) -> Qcow2Result<()> {
             .read(true)
             .write(true)
             .create(true)
+            .truncate(true)
             .open(&args.file)
             .unwrap();
-        let res = f.write(&buf).unwrap();
-
-        assert!(res == buf.len());
+        f.write_all(&buf).unwrap();
     }
     dump_header(&args.file).unwrap();
 
@@ -445,7 +438,7 @@ fn map_qcow2(args: MapArgs) -> Qcow2Result<()> {
             let mapping = dev.get_mapping(start).await.unwrap();
 
             if mapping.allocated() {
-                println!("virt_addr {:x} mapping {}", start, mapping);
+                println!("virt_addr {start:x} mapping {mapping}");
                 i += 1;
             }
 
@@ -462,7 +455,7 @@ fn info_qcow2(args: InfoArgs) -> Qcow2Result<()> {
         let p = qcow2_rs::qcow2_default_params!(true, false);
         let dev = qcow2_setup_dev_tokio(&args.file, &p).await.unwrap();
         let info = &dev.info;
-        println!("{:?}", dev);
+        println!("{dev:?}");
 
         let total_clusters = info.virtual_size() >> info.cluster_bits();
         println!(
@@ -501,10 +494,7 @@ fn info_qcow2(args: InfoArgs) -> Qcow2Result<()> {
                 *meta.borrow_mut() += sum;
             }
 
-            println!(
-                "\t{:<16}: alloc {:10} compressed {:10} used {:10}",
-                info, alloc, comp, sum
-            );
+            println!("\t{info:<16}: alloc {alloc:10} compressed {comp:10} used {sum:10}");
             if args.verbose {
                 for r in ranges {
                     println!(
@@ -628,11 +618,10 @@ fn convert_to_qcow2_prep(raw: &Path, qcow2: &Path) -> Qcow2Result<()> {
     let mut f = std::fs::OpenOptions::new()
         .write(true)
         .create(true)
+        .truncate(true)
         .open(qcow2)
         .unwrap();
-    let res = f.write(&img_buf).unwrap();
-
-    assert!(res == img_buf.len());
+    f.write_all(&img_buf).unwrap();
 
     Ok(())
 }

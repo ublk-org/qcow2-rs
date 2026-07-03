@@ -4,7 +4,7 @@ mod common;
 mod integretion {
     use crate::common::*;
     use crypto_hash::{hex_digest, Algorithm};
-    use hex;
+
     use qcow2_rs::dev::*;
     use qcow2_rs::helpers::Qcow2IoBuf;
     use qcow2_rs::qcow2_default_params;
@@ -148,7 +148,7 @@ mod integretion {
             let raw_f = make_rand_raw_img(size, cluster_bits);
             let raw_path = raw_f.path().to_str().unwrap();
             let mut file = std::fs::File::open(raw_path).unwrap();
-            file.read(&mut buf).unwrap();
+            file.read_exact(&mut buf).unwrap();
 
             // fill the last 8k as zero
             for i in (bsize - boff)..bsize {
@@ -170,10 +170,10 @@ mod integretion {
             let qcow2_sum = hex_digest(Algorithm::MD5, &buf2);
 
             if raw_sum != qcow2_sum {
-                println!("{} {}", raw_sum, qcow2_sum);
+                println!("{raw_sum} {qcow2_sum}");
                 for i in 0..(size as usize) {
                     if buf[i] != buf2[i] {
-                        println!("mismatched in {}", i);
+                        println!("mismatched in {i}");
                         println!("correct : {:?}", buf[i..i + 32].to_vec());
                         println!("wrong : {:?}", buf2[i..i + 32].to_vec());
                         break;
@@ -201,7 +201,7 @@ mod integretion {
             let raw_f = make_rand_raw_img(bsize, cluster_bits);
             let raw_path = raw_f.path().to_str().unwrap();
             let mut file = std::fs::File::open(raw_path).unwrap();
-            file.read(&mut buf).unwrap();
+            file.read_exact(&mut buf).unwrap();
             let raw_sum = hex_digest(Algorithm::MD5, &buf);
 
             let dev = qcow2_setup_dev_tokio(&path, &params).await.unwrap();
@@ -210,7 +210,7 @@ mod integretion {
             let start = Instant::now();
             //write concurrently
             for off in (0..size).step_by(bsize as usize) {
-                f_vec.push(dev.write_at(&buf, off as u64));
+                f_vec.push(dev.write_at(&buf, off));
             }
             futures::future::join_all(f_vec).await;
             let duration = start.elapsed();
@@ -273,7 +273,7 @@ mod integretion {
             let raw_f = make_rand_raw_img(size, cluster_bits);
             let raw_path = raw_f.path().to_str().unwrap();
             let mut file = std::fs::File::open(raw_path).unwrap();
-            file.read(&mut buf).unwrap();
+            file.read_exact(&mut buf).unwrap();
 
             let dev = qcow2_setup_dev_tokio(&path, &params).await.unwrap();
 
@@ -289,7 +289,7 @@ mod integretion {
             }
             dev.check().await.unwrap();
 
-            assert!(!res0.is_err() && !res1.is_err());
+            assert!(res0.is_ok() && res1.is_ok());
         });
     }
 
@@ -338,7 +338,7 @@ mod integretion {
             let img_file = make_temp_qcow2_img(size, cluster_bits, 4);
             let path = PathBuf::from(img_file.path());
             let params = qcow2_default_params!(false, false);
-            let dev = std::sync::Arc::new(qcow2_setup_dev_tokio(&path, &params).await.unwrap());
+            let dev = std::rc::Rc::new(qcow2_setup_dev_tokio(&path, &params).await.unwrap());
             let mut fv = Vec::new();
             let blocks = size >> params.get_bs_bits();
             let bs = 1 << params.get_bs_bits();
@@ -357,7 +357,7 @@ mod integretion {
                     let mut wbuf = Qcow2IoBuf::<u8>::new(bsize as usize);
                     rng.fill(&mut wbuf[..]);
 
-                    println!("randwrite: off {:x} len {}", off, bsize);
+                    println!("randwrite: off {off:x} len {bsize}");
                     d.write_at(&wbuf, off).await.unwrap();
                 }));
             }
@@ -371,7 +371,7 @@ mod integretion {
                     let bsize = rng.gen_range(min_bs..=max_bs) * bs;
                     let mut rbuf = Qcow2IoBuf::<u8>::new(bsize as usize);
 
-                    println!("randread: off {:x} len {}", off, bsize);
+                    println!("randread: off {off:x} len {bsize}");
                     d.read_at(&mut rbuf, off).await.unwrap();
                 }));
             }

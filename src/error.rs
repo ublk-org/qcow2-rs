@@ -106,7 +106,7 @@ mod tests {
 
     #[test]
     fn test_qcow2_error_from_io_error() {
-        let io_err = io::Error::new(io::ErrorKind::Other, "test error");
+        let io_err = io::Error::other("test error");
         let qcow2_err = Qcow2Error::from(io_err);
         assert_eq!(qcow2_err.description, "test error");
         assert_eq!(qcow2_err.io.kind(), io::ErrorKind::Other);
