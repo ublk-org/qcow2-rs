@@ -96,15 +96,12 @@ macro_rules! qcow2_setup_dev_fn {
         ) -> Qcow2Result<Qcow2Dev<$type>> {
             let io = <$type>::new(path, params.is_read_only(), params.is_direct_io()).await;
             let (mut dev, backing) = qcow2_alloc_dev(&path, io, params).await?;
-            match backing {
-                Some(back_path) => {
-                    let mut p = params.clone();
-                    p.mark_backing_dev(Some(true));
-                    let bdev = $fn_name(&back_path.as_path(), &p).await?;
-                    dev.set_backing_dev(Box::new(bdev));
-                }
-                _ => {}
-            };
+            if let Some(back_path) = backing {
+                let mut p = params.clone();
+                p.mark_backing_dev(Some(true));
+                let bdev = $fn_name(&back_path.as_path(), &p).await?;
+                dev.set_backing_dev(Box::new(bdev));
+            }
 
             dev.__qcow2_prep_io().await?;
             Ok(dev)
@@ -126,15 +123,12 @@ macro_rules! qcow2_setup_dev_fn_sync {
         pub fn $fn_name(path: &Path, params: &Qcow2DevParams) -> Qcow2Result<Qcow2Dev<$type>> {
             let io = <$type>::new(path, params.is_read_only(), params.is_direct_io());
             let (mut dev, backing) = qcow2_alloc_dev_sync(&path, io, params)?;
-            match backing {
-                Some(back_path) => {
-                    let mut p = params.clone();
-                    p.mark_backing_dev(Some(true));
-                    let bdev = $fn_name(&back_path.as_path(), &p)?;
-                    dev.set_backing_dev(Box::new(bdev));
-                }
-                _ => {}
-            };
+            if let Some(back_path) = backing {
+                let mut p = params.clone();
+                p.mark_backing_dev(Some(true));
+                let bdev = $fn_name(&back_path.as_path(), &p)?;
+                dev.set_backing_dev(Box::new(bdev));
+            }
 
             Ok(dev)
         }
