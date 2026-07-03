@@ -1,9 +1,19 @@
 use super::*;
 use crate::error::Qcow2Result;
+use crate::helpers::IntAlignment;
 use crate::meta::{Mapping, MappingSource, Table, TableEntry};
 use futures_locks::RwLock as AsyncRwLock;
 use std::collections::HashMap;
 use std::ops::RangeInclusive;
+
+/// Collect the cluster ranges built by `add_used_cluster_to_set` into a
+/// sorted, deduplicated list
+fn sorted_ranges(set: &HashMap<u64, RangeInclusive<u64>>) -> Vec<&RangeInclusive<u64>> {
+    let mut res: Vec<_> = set.values().collect();
+    res.sort_by_key(|range| *range.start());
+    res.dedup();
+    res
+}
 
 impl<T: Qcow2IoOps> Qcow2Dev<T> {
     fn add_used_cluster_to_set(ranges: &mut HashMap<u64, RangeInclusive<u64>>, num: u64) {
@@ -59,7 +69,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
                 ..(h.reftable_offset() + (h.reftable_clusters() << info.cluster_bits()) as u64)
         };
 
-        for c in rt_range {
+        for c in rt_range.step_by(info.cluster_size()) {
             Self::add_used_cluster_to_set(ranges, c >> self.info.cluster_bits());
         }
 
@@ -73,12 +83,18 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         let cls_size = info.cluster_size();
         let l1_range = {
             let h = self.header.read().await;
-            let l1_size = (self.l1table.read().await.byte_size() + cls_size - 1) & !(cls_size - 1);
+            let l1_size = self
+                .l1table
+                .read()
+                .await
+                .byte_size()
+                .align_up(cls_size)
+                .unwrap();
 
             h.l1_table_offset()..(h.l1_table_offset() + l1_size as u64)
         };
 
-        for c in l1_range {
+        for c in l1_range.step_by(cls_size) {
             Self::add_used_cluster_to_set(ranges, c >> self.info.cluster_bits());
         }
 
@@ -94,7 +110,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         let mut allocated = 0;
         let mut compressed = 0;
 
-        for start in (0..end).step_by(1 << info.cluster_bits()) {
+        for start in (0..end).step_by(info.cluster_size()) {
             let mapping = self.get_mapping(start).await?;
 
             match mapping.source {
@@ -123,12 +139,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
     }
 
     fn is_allocated_cluster_in_use(set: &Vec<&RangeInclusive<u64>>, cluster: u64) -> bool {
-        for range in set {
-            if range.contains(&cluster) {
-                return true;
-            }
-        }
-        false
+        set.iter().any(|range| range.contains(&cluster))
     }
 
     /// Return Host Cluster usage, such as, allocated clusters, how many of them
@@ -139,38 +150,23 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
     {
         let mut set: HashMap<u64, RangeInclusive<u64>> = HashMap::new();
         self.add_refcount_table_clusters(&mut set).await?;
-        let mut this_res: Vec<_> = set.values().collect();
-        this_res.sort_by_key(|range| *range.start());
-        this_res.dedup();
-        cls_usage("refcount_table", &this_res, None);
+        cls_usage("refcount_table", &sorted_ranges(&set), None);
 
         let mut set: HashMap<u64, RangeInclusive<u64>> = HashMap::new();
         self.add_l1_table_clusters(&mut set).await?;
-        let mut this_res: Vec<_> = set.values().collect();
-        this_res.sort_by_key(|range| *range.start());
-        this_res.dedup();
-        cls_usage("l1_table", &this_res, None);
+        cls_usage("l1_table", &sorted_ranges(&set), None);
 
         let mut set: HashMap<u64, RangeInclusive<u64>> = HashMap::new();
         self.add_table_clusters(&self.l1table, &mut set).await;
-        let mut this_res: Vec<_> = set.values().collect();
-        this_res.sort_by_key(|range| *range.start());
-        this_res.dedup();
-        cls_usage("l2_tables", &this_res, None);
+        cls_usage("l2_tables", &sorted_ranges(&set), None);
 
         let mut set: HashMap<u64, RangeInclusive<u64>> = HashMap::new();
         self.add_table_clusters(&self.reftable, &mut set).await;
-        let mut this_res: Vec<_> = set.values().collect();
-        this_res.sort_by_key(|range| *range.start());
-        this_res.dedup();
-        cls_usage("refblock_tables", &this_res, None);
+        cls_usage("refblock_tables", &sorted_ranges(&set), None);
 
         let mut set: HashMap<u64, RangeInclusive<u64>> = HashMap::new();
         let stat_res = self.add_data_clusters(&mut set).await?;
-        let mut this_res: Vec<_> = set.values().collect();
-        this_res.sort_by_key(|range| *range.start());
-        this_res.dedup();
-        cls_usage("data", &this_res, Some(stat_res));
+        cls_usage("data", &sorted_ranges(&set), Some(stat_res));
 
         Ok(())
     }
@@ -190,9 +186,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         self.add_table_clusters(&self.reftable, &mut set).await;
         let _ = self.add_data_clusters(&mut set).await?;
 
-        let mut result: Vec<_> = set.values().collect();
-        result.sort_by_key(|range| *range.start());
-        result.dedup();
+        let result = sorted_ranges(&set);
 
         for range in &result {
             log::debug!("{:?}", range);
@@ -217,7 +211,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
             info.virtual_size(),
             max_allocated
         );
-        for start in (0..max_allocated).step_by(1 << info.cluster_bits()) {
+        for start in (0..max_allocated).step_by(info.cluster_size()) {
             let allocated = self.cluster_is_allocated(start).await?;
             if !allocated {
                 continue;
@@ -251,11 +245,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         let rb_handle = self.get_refblock(&cls, &rt_entry).await?;
         let rb = rb_handle.value().read().await;
 
-        if rb.get(cls.rb_slice_index(&self.info)).is_zero() {
-            Ok(false)
-        } else {
-            Ok(true)
-        }
+        Ok(!rb.get(cls.rb_slice_index(&self.info)).is_zero())
     }
 
     async fn check_cluster(&self, virt_off: u64, cluster: Option<u64>) -> Qcow2Result<()> {
@@ -288,7 +278,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         let info = &self.info;
         let end = info.virtual_size();
 
-        for start in (0..end).step_by(1 << info.cluster_bits()) {
+        for start in (0..end).step_by(info.cluster_size()) {
             let mapping = self.get_mapping(start).await?;
 
             self.check_single_mapping(start, mapping).await?;

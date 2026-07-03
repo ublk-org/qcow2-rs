@@ -277,6 +277,24 @@ impl Qcow2Header {
             return Err(format!("qcow2 cluster size {cluster_size} is too big").into());
         }
 
+        // the spec requires both tables to start at a cluster boundary,
+        // and the cluster walk in check() relies on it
+        let l1_table_offset = header.l1_table_offset;
+        if l1_table_offset & (cluster_size - 1) != 0 {
+            return Err(format!(
+                "qcow2 L1 table offset {l1_table_offset:#x} is not cluster aligned"
+            )
+            .into());
+        }
+
+        let reftable_offset = header.refcount_table_offset;
+        if reftable_offset & (cluster_size - 1) != 0 {
+            return Err(format!(
+                "qcow2 refcount table offset {reftable_offset:#x} is not cluster aligned"
+            )
+            .into());
+        }
+
         let backing_filename = if header.backing_file_offset != 0 {
             let (offset, length) = (header.backing_file_offset, header.backing_file_size);
             if length > 1023 {
@@ -767,5 +785,32 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn test_unaligned_table_offsets_rejected() {
+        let cluster_bits = 16;
+        let refcount_order = 4;
+        let size = 64 << 20;
+        let p = crate::qcow2_default_params!(true, true);
+        let bs = 1 << p.get_bs_bits();
+        let (rc_t, rc_b, _) =
+            Qcow2Header::calculate_meta_params(size, cluster_bits, refcount_order, bs);
+        let clusters = 1 + rc_t.1 + rc_b.1;
+        let img_size = ((clusters as usize) << cluster_bits) + 512;
+        let mut buf = vec![0u8; img_size];
+
+        Qcow2Header::format_qcow2(&mut buf, size, cluster_bits, refcount_order, bs).unwrap();
+        assert!(Qcow2Header::from_buf(&buf).is_ok());
+
+        // corrupt the low byte of the big-endian l1_table_offset (bytes 40..48)
+        let mut unaligned = buf.clone();
+        unaligned[47] |= 0x2;
+        assert!(Qcow2Header::from_buf(&unaligned).is_err());
+
+        // corrupt the low byte of the big-endian refcount_table_offset (bytes 48..56)
+        let mut unaligned = buf.clone();
+        unaligned[55] |= 0x2;
+        assert!(Qcow2Header::from_buf(&unaligned).is_err());
     }
 }

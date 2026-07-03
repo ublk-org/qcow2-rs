@@ -141,11 +141,6 @@ pub trait Table: From<Qcow2IoBuf<Self::Entry>> {
     fn as_ptr(&self) -> *const u8;
     fn as_mut_ptr(&mut self) -> *mut u8;
 
-    fn set_with_return(&mut self, index: usize, value: Self::Entry) -> Qcow2Result<()> {
-        self.set(index, value);
-        Ok(())
-    }
-
     fn byte_size(&self) -> usize {
         self.entries() * size_of::<u64>()
     }
@@ -159,10 +154,9 @@ pub trait Table: From<Qcow2IoBuf<Self::Entry>> {
     }
 
     fn new_empty(offset: Option<u64>, size: usize) -> Self {
-        let table = Qcow2IoBuf::<Self::Entry>::new(size);
-        unsafe {
-            std::ptr::write_bytes(table.as_mut_ptr(), 0, table.len());
-        }
+        let mut table = Qcow2IoBuf::<Self::Entry>::new(size);
+        table.zero_buf();
+
         let mut table: Self = table.into();
         table.set_offset(offset);
 

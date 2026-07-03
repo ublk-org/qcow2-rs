@@ -1,5 +1,5 @@
 use crate::error::Qcow2Result;
-use crate::helpers::Qcow2IoBuf;
+use crate::helpers::{IntAlignment, Qcow2IoBuf};
 use crate::meta::{L2Entry, Mapping, MappingSource, SplitGuestOffset};
 use crate::zero_buf;
 use async_recursion::async_recursion;
@@ -10,7 +10,7 @@ use super::*;
 
 impl<T: Qcow2IoOps> Qcow2Dev<T> {
     pub async fn get_mapping(&self, virtual_offset: u64) -> Qcow2Result<Mapping> {
-        let split = SplitGuestOffset(virtual_offset & !(self.info.in_cluster_offset_mask as u64));
+        let split = SplitGuestOffset(self.info.cluster_round_down(virtual_offset));
         let entry = self.get_l2_entry(virtual_offset).await?;
 
         Ok(entry.into_mapping(&self.info, &split))
@@ -42,10 +42,9 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
     #[inline]
     async fn get_l2_entries(&self, off: u64, len: usize) -> Qcow2Result<Vec<L2Entry>> {
         let info = &self.info;
-        let start = off & (!(info.in_cluster_offset_mask) as u64);
-        let end = (off + ((len + info.cluster_size()) as u64) - 1)
-            & (!(info.in_cluster_offset_mask) as u64);
-        let mut entries = Vec::new();
+        let start = info.cluster_round_down(off);
+        let end = info.cluster_round_up(off + len as u64);
+        let mut entries = Vec::with_capacity(((end - start) as usize) >> info.cluster_bits());
         let mut voff = start;
 
         while voff < end {
@@ -98,11 +97,10 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         let compressed_length = mapping.compressed_length.unwrap();
 
         // for supporting dio, we have to run aligned IO
-        let bs = 1 << info.block_size_shift;
-        let bs_mask = !((1_u64 << info.block_size_shift) - 1);
-        let aligned_off = compressed_offset & bs_mask;
+        let bs = 1_usize << info.block_size_shift;
+        let aligned_off = compressed_offset.align_down(bs as u64).unwrap();
         let pad = (compressed_offset - aligned_off) as usize;
-        let aligned_len = (pad + compressed_length + bs - 1) & (bs_mask as usize);
+        let aligned_len = (pad + compressed_length).align_up(bs).unwrap();
 
         let mut _compressed_data = Qcow2IoBuf::<u8>::new(aligned_len);
         let res = self.call_read(aligned_off, &mut _compressed_data).await?;
@@ -111,28 +109,27 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         }
         let compressed_data = &_compressed_data[pad..(pad + compressed_length)];
 
-        let mut dec_ox = DecompressorOxide::new();
-        if buf.len() == info.cluster_size() {
-            let (status, _read, _written) = inflate(&mut dec_ox, compressed_data, buf, 0, 0);
-            if status != TINFLStatus::Done && status != TINFLStatus::HasMoreOutput {
-                return Err(format!(
-                    "Failed to decompress cluster (host offset 0x{compressed_offset:x}+{compressed_length}): {status:?}"
-                )
-                .into());
-            }
-        } else {
-            let mut uncompressed_data = vec![0; info.cluster_size()];
-
-            let (status, _read, _written) =
-                inflate(&mut dec_ox, compressed_data, &mut uncompressed_data, 0, 0);
-            if status != TINFLStatus::Done && status != TINFLStatus::HasMoreOutput {
-                return Err(format!(
-                    "Failed to decompress cluster (host offset 0x{compressed_offset:x}+{compressed_length}): {status:?}"
-                )
-                .into());
-            }
-            buf.copy_from_slice(&uncompressed_data[off_in_cls..(off_in_cls + buf.len())]);
+        // inflate straight into `buf` when it covers the whole cluster,
+        // otherwise into a temporary cluster buffer and copy the wanted part
+        let mut whole_cluster =
+            (buf.len() != info.cluster_size()).then(|| vec![0; info.cluster_size()]);
+        let dst: &mut [u8] = match whole_cluster.as_deref_mut() {
+            Some(tmp) => tmp,
+            None => buf,
         };
+
+        let mut dec_ox = DecompressorOxide::new();
+        let (status, _read, _written) = inflate(&mut dec_ox, compressed_data, dst, 0, 0);
+        if status != TINFLStatus::Done && status != TINFLStatus::HasMoreOutput {
+            return Err(format!(
+                "Failed to decompress cluster (host offset 0x{compressed_offset:x}+{compressed_length}): {status:?}"
+            )
+            .into());
+        }
+
+        if let Some(tmp) = whole_cluster {
+            buf.copy_from_slice(&tmp[off_in_cls..(off_in_cls + buf.len())]);
+        }
 
         Ok(buf.len())
     }
@@ -161,12 +158,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
     }
 
     #[inline]
-    async fn do_read_zero(
-        &self,
-        _mapping: Mapping,
-        _off_in_cls: usize,
-        buf: &mut [u8],
-    ) -> Qcow2Result<usize> {
+    async fn do_read_zero(&self, buf: &mut [u8]) -> Qcow2Result<usize> {
         zero_buf!(buf);
         Ok(buf.len())
     }
@@ -186,7 +178,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
 
     #[inline]
     async fn do_read(&self, entry: L2Entry, offset: u64, buf: &mut [u8]) -> Qcow2Result<usize> {
-        let off_in_cls = (offset as usize) & self.info.in_cluster_offset_mask;
+        let off_in_cls = self.info.in_cluster_offset(offset);
         let split = SplitGuestOffset(offset - (off_in_cls as u64));
         let mapping = entry.into_mapping(&self.info, &split);
 
@@ -198,14 +190,8 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         );
         match mapping.source {
             MappingSource::DataFile => self.do_read_data_file(mapping, off_in_cls, buf).await,
-            MappingSource::Zero | MappingSource::Unallocated => {
-                let mapping = self.get_mapping(offset).await?;
-                self.do_read_zero(mapping, off_in_cls, buf).await
-            }
-            MappingSource::Backing => {
-                let mapping = self.get_mapping(offset).await?;
-                self.do_read_backing(mapping, off_in_cls, buf).await
-            }
+            MappingSource::Zero | MappingSource::Unallocated => self.do_read_zero(buf).await,
+            MappingSource::Backing => self.do_read_backing(mapping, off_in_cls, buf).await,
             MappingSource::Compressed => self.do_read_compressed(mapping, off_in_cls, buf).await,
         }
     }
@@ -267,45 +253,31 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
 
             self.do_read(l2_entry, offset, buf).await?
         } else {
-            let mut reads = Vec::new();
+            let nr_clusters = (len >> info.cluster_bits()) + 2;
+            let mut reads = Vec::with_capacity(nr_clusters);
+            let mut lens = Vec::with_capacity(nr_clusters);
             let mut remain = buf;
-            let mut first_len = 0;
-            let mut last_len = 0;
             let mut idx = 0;
             let mut s = 0;
             let l2_entries = self.get_l2_entries(offset, len).await?;
 
             while len > 0 {
-                let in_cluster_offset = offset as usize & info.in_cluster_offset_mask;
+                let in_cluster_offset = info.in_cluster_offset(offset);
                 let curr_len = std::cmp::min(info.cluster_size() - in_cluster_offset, len);
                 let (iobuf, b) = remain.split_at_mut(curr_len);
                 remain = b;
 
-                if first_len == 0 {
-                    first_len = curr_len;
-                }
-
                 reads.push(self.do_read(l2_entries[idx], offset, iobuf));
+                lens.push(curr_len);
 
                 offset += curr_len as u64;
                 len -= curr_len;
-                if len == 0 {
-                    last_len = curr_len;
-                }
                 idx += 1;
             }
 
             let res = futures::future::join_all(reads).await;
-            for i in 0..res.len() {
-                let exp = if i == 0 {
-                    first_len
-                } else if i == res.len() - 1 {
-                    last_len
-                } else {
-                    info.cluster_size()
-                };
-
-                match res[i] {
+            for (exp, r) in lens.into_iter().zip(res) {
+                match r {
                     Ok(r) => {
                         s += r;
                         if r != exp {

@@ -2,9 +2,10 @@ use super::*;
 use crate::cache::AsyncLruCache;
 use crate::cache::AsyncLruCacheEntry;
 use crate::error::Qcow2Result;
-use crate::helpers::{qcow2_type_of, Qcow2IoBuf};
+use crate::helpers::qcow2_type_of;
 use crate::meta::{L1Entry, L1Table, L2Table, SplitGuestOffset, Table, TableEntry};
-use futures_locks::RwLock as AsyncRwLock;
+use futures_locks::{RwLock as AsyncRwLock, RwLockWriteGuard as LockWriteGuard};
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 
 impl<T: Qcow2IoOps> Qcow2Dev<T> {
@@ -31,14 +32,30 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         let res = self.file.fallocate(offset, len, flags).await;
         match res {
             Err(_) => {
-                let mut zero_data = Qcow2IoBuf::<u8>::new(len);
-
                 log::trace!("discard fallback off {:x} len {}", offset, len);
-                zero_data.zero_buf();
+                let zero_data = zeroed_io_buf(len);
                 self.call_write(offset, &zero_data).await
             }
             Ok(_) => Ok(()),
         }
+    }
+
+    /// Write the (already updated) header out; on failure run `rollback`
+    /// to restore the in-ram header so ram & disk stay consistent
+    pub(crate) async fn commit_header<F>(
+        &self,
+        h: &mut LockWriteGuard<Qcow2Header>,
+        rollback: F,
+    ) -> Qcow2Result<()>
+    where
+        F: FnOnce(&mut Qcow2Header),
+    {
+        let buf = h.serialize_to_buf()?;
+        if let Err(err) = self.call_write(0, &buf).await {
+            rollback(h);
+            return Err(err);
+        }
+        Ok(())
     }
 
     /// flush data range in (offset, len) to disk
@@ -74,21 +91,8 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
 
     pub(crate) async fn get_l1_entry(&self, split: &SplitGuestOffset) -> Qcow2Result<L1Entry> {
         let l1_index = split.l1_index(&self.info);
-        let res = {
-            let handle = self.l1table.read().await;
-            if handle.is_update() {
-                Some(handle.get(l1_index))
-            } else {
-                None
-            }
-        };
 
-        let l1_entry = match res {
-            None => self.l1table.read().await.get(l1_index),
-            Some(entry) => entry,
-        };
-
-        Ok(l1_entry)
+        Ok(self.l1table.read().await.get(l1_index))
     }
 
     #[inline]
@@ -118,7 +122,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         &self,
         l1_e: &L1Entry,
         split: &SplitGuestOffset,
-    ) -> Qcow2Result<AsyncLruCacheEntry<AsyncRwLock<L2Table>>> {
+    ) -> Qcow2Result<AsyncLruCacheEntry<L2TableHandle>> {
         let info = &self.info;
         let key = split.l2_slice_key(info);
         let l2_cache = &self.l2cache;
@@ -148,7 +152,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
     pub(crate) async fn get_l2_slice(
         &self,
         split: &SplitGuestOffset,
-    ) -> Qcow2Result<AsyncLruCacheEntry<AsyncRwLock<L2Table>>> {
+    ) -> Qcow2Result<AsyncLruCacheEntry<L2TableHandle>> {
         let key = split.l2_slice_key(&self.info);
 
         match self.l2cache.get(key) {
@@ -205,28 +209,28 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
                         Some(cache_off) => {
                             let key = cache_off >> info.cluster_bits();
 
-                            if !cluster_map.contains_key(&key) && self.cluster_is_new(key).await {
+                            if let Entry::Vacant(slot) = cluster_map.entry(key) {
                                 let cls_map = self.new_cluster.read().await;
                                 // keep this cluster locked, so that concurrent discard can
                                 // be avoided
-                                let mut locked_cls = cls_map.get(&key).unwrap().write().await;
+                                if let Some(cluster) = cls_map.get(&key) {
+                                    let mut locked_cls = cluster.write().await;
 
-                                log::debug!(
-                                    "flush_cache_entries: discard cluster {:x} done {}",
-                                    cache_off & !((1 << info.cluster_bits()) - 1),
-                                    *locked_cls
-                                );
-                                if !(*locked_cls) {
-                                    // mark it as discarded, so others can observe it after
-                                    // grabbing write lock
-                                    *locked_cls = true;
-                                    if cls_map.contains_key(&key) {
+                                    log::debug!(
+                                        "flush_cache_entries: discard cluster {:x} done {}",
+                                        info.cluster_round_down(cache_off),
+                                        *locked_cls
+                                    );
+                                    if !(*locked_cls) {
+                                        // mark it as discarded, so others can observe it after
+                                        // grabbing write lock
+                                        *locked_cls = true;
                                         f_vec.push(self.call_fallocate(
-                                            cache_off & !((1 << info.cluster_bits()) - 1),
-                                            1 << info.cluster_bits(),
+                                            info.cluster_round_down(cache_off),
+                                            info.cluster_size(),
                                             Qcow2OpsFlags::FALLOCATE_ZERO_RANGE,
                                         ));
-                                        cluster_map.insert(key, locked_cls);
+                                        slot.insert(locked_cls);
                                     }
                                 }
                             }
@@ -256,14 +260,12 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
 
         let mut f_vec = Vec::new();
         for cache in cache_vec.iter() {
-            let off = cache.get_offset().unwrap();
-            let buf = unsafe { std::slice::from_raw_parts(cache.as_ptr(), cache.byte_size()) };
             log::trace!(
                 "flush_cache_entries: cache {} offset {:x}",
                 qcow2_type_of(cache),
-                off
+                cache.get_offset().unwrap()
             );
-            f_vec.push(self.call_write(off, buf));
+            f_vec.push(self.flush_table(&**cache, 0, cache.byte_size()));
         }
 
         let res = futures::future::join_all(f_vec).await;
@@ -379,18 +381,35 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         }
     }
 
+    /// Map a byte offset inside the reftable to the cache key of the first
+    /// refblock slice covered by that reftable entry (inverse of
+    /// `HostCluster::rb_slice_key`)
+    fn rb_slice_key_of_rt_off(&self, off: u64) -> usize {
+        let info = &self.info;
+        let rt_idx: u64 = off >> 3;
+        let host_cls = (rt_idx << info.rb_index_shift) << info.cluster_bits();
+
+        HostCluster(host_cls).rb_slice_key(info)
+    }
+
+    /// Map a byte offset inside the l1 table to the cache key of the first
+    /// l2 slice covered by that l1 entry (inverse of
+    /// `SplitGuestOffset::l2_slice_key`)
+    fn l2_slice_key_of_l1_off(&self, off: u64) -> usize {
+        let info = &self.info;
+        let l1_idx: u64 = off >> 3;
+        let virt_addr = (l1_idx << info.l2_index_shift) << info.cluster_bits();
+
+        SplitGuestOffset(virt_addr).l2_slice_key(info)
+    }
+
     //// flush refcount table and block dirty data to disk
     pub(crate) async fn flush_refcount(&self) -> Qcow2Result<()> {
-        let info = &self.info;
-
         loop {
             let rt = &*self.reftable.read().await;
             let done = self
                 .flush_meta_generic(rt, &self.refblock_cache, |off| {
-                    let rt_idx: u64 = off >> 3;
-                    let host_cls = (rt_idx << info.rb_index_shift) << info.cluster_bits();
-                    let k = HostCluster(host_cls);
-                    k.rb_slice_key(info)
+                    self.rb_slice_key_of_rt_off(off)
                 })
                 .await?;
             if done {
@@ -402,16 +421,9 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
 
     //// flush mapping cache
     pub(crate) async fn flush_mapping(&self, l1: &L1Table) -> Qcow2Result<()> {
-        let info = &self.info;
-
         loop {
             let done = self
-                .flush_meta_generic(l1, &self.l2cache, |off| {
-                    let l1_idx: u64 = off >> 3;
-                    let virt_addr = (l1_idx << info.l2_index_shift) << info.cluster_bits();
-                    let k = SplitGuestOffset(virt_addr);
-                    k.l2_slice_key(info)
-                })
+                .flush_meta_generic(l1, &self.l2cache, |off| self.l2_slice_key_of_l1_off(off))
                 .await?;
             if done {
                 break;
@@ -427,7 +439,6 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
 
     /// flush meta data in ram to disk
     pub async fn flush_meta(&self) -> Qcow2Result<()> {
-        let info = &self.info;
         let _flush_lock = self.flush_lock.lock().await;
 
         log::debug!("flush_meta: entry");
@@ -442,12 +453,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
             let l1 = &*self.l1table.read().await;
 
             let done = self
-                .flush_meta_generic(l1, &self.l2cache, |off| {
-                    let l1_idx: u64 = off >> 3;
-                    let virt_addr = (l1_idx << info.l2_index_shift) << info.cluster_bits();
-                    let k = SplitGuestOffset(virt_addr);
-                    k.l2_slice_key(info)
-                })
+                .flush_meta_generic(l1, &self.l2cache, |off| self.l2_slice_key_of_l1_off(off))
                 .await?;
             if done {
                 self.mark_need_flush(false);

@@ -28,9 +28,6 @@ impl_entry_display_trait!(L1Entry);
 pub struct L1Entry(u64);
 
 impl L1Entry {
-    const DIRTY: u64 = 0x1;
-    const NEW: u64 = 0x2;
-
     pub fn l2_offset(&self) -> u64 {
         self.0 & 0x00ff_ffff_ffff_fe00u64
     }
@@ -98,7 +95,6 @@ impl L1Table {
     pub fn new(offset: Option<u64>, data_size: usize, header_entries: u32, bs_bits: u8) -> Self {
         let mut l1 = L1Table::new_empty(offset, data_size);
         l1.header_entries = header_entries;
-        l1.dirty_blocks = RefCell::new(VecDeque::new());
         l1.bs_bits = bs_bits;
         l1
     }

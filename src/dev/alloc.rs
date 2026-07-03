@@ -153,11 +153,10 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
                 grown_rt.cluster_count(&self.info),
             )?;
 
-            let buf = h.serialize_to_buf()?;
-            if let Err(err) = self.call_write(0, &buf).await {
-                h.set_reftable(old_rt_offset, old_rt_clusters).unwrap();
-                return Err(err);
-            }
+            self.commit_header(&mut h, |h| {
+                h.set_reftable(old_rt_offset, old_rt_clusters).unwrap()
+            })
+            .await?;
         }
 
         self.free_clusters(old_rt_offset, old_rt_clusters).await?;
@@ -182,11 +181,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         log::info!("free_clusters start {:x} num {}", host_cluster, count);
         while count > 0 {
             let cls = HostCluster(host_cluster);
-            let mut rt_e = self.get_reftable_entry(cls.rt_index(info)).await;
-
-            if rt_e.is_zero() {
-                rt_e = self.get_reftable_entry(cls.rt_index(info)).await;
-            }
+            let rt_e = self.get_reftable_entry(cls.rt_index(info)).await;
 
             let rb_handle = match self.get_refblock(&cls, &rt_e).await {
                 Ok(handle) => handle,
@@ -218,7 +213,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
                 let slice_idx = cls.rb_slice_index(info);
 
                 refblock.decrement(slice_idx).unwrap();
-                if refblock.get(slice_idx).is_zero() && first_zero {
+                if first_zero && refblock.get(slice_idx).is_zero() {
                     self.free_cluster_offset
                         .fetch_min(host_cluster, Ordering::Relaxed);
                     first_zero = false;
@@ -432,28 +427,20 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         let rb_handle = self.get_refblock(cls, rt_e).await?;
         let mut rb = rb_handle.value().write().await;
 
-        match rb.get_free_range(rb_slice_index, count) {
+        let range = match rb.get_free_range(rb_slice_index, count) {
+            Some(r) => Some(r),
+            None if fixed_start => None,
+            None => rb.get_tail_free_range(),
+        };
+
+        match range {
             Some(r) => {
                 rb.alloc_range(r.start, r.end)?;
                 rb_handle.set_dirty(true);
                 self.mark_need_flush(true);
                 Ok(Some((cls.cluster_off_from_slice(info, r.start), r.len())))
             }
-            _ => {
-                if fixed_start {
-                    Ok(None)
-                } else {
-                    match rb.get_tail_free_range() {
-                        Some(r) => {
-                            rb.alloc_range(r.start, r.end)?;
-                            rb_handle.set_dirty(true);
-                            self.mark_need_flush(true);
-                            Ok(Some((cls.cluster_off_from_slice(info, r.start), r.len())))
-                        }
-                        _ => Ok(None),
-                    }
-                }
-            }
+            None => Ok(None),
         }
     }
 
@@ -580,15 +567,8 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
     ) -> Qcow2Result<usize> {
         let rb_h = self.get_refblock(cls, rt_e).await?;
         let rb = rb_h.value().write().await;
-        let mut total = 0;
 
-        for i in 0..rb.entries() {
-            if !rb.get(i).is_zero() {
-                total += 1;
-            }
-        }
-
-        Ok(total)
+        Ok((0..rb.entries()).filter(|&i| !rb.get(i).is_zero()).count())
     }
 
     async fn count_rt_entry_alloc_clusters(&self, cls: &HostCluster) -> Qcow2Result<Option<usize>> {

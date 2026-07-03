@@ -50,8 +50,8 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         }
 
         // Round inward to whole-cluster boundaries.
-        let start = virtual_offset.div_ceil(cluster_size) * cluster_size;
-        let stop = end & !(cluster_size - 1);
+        let start = info.cluster_round_up(virtual_offset);
+        let stop = info.cluster_round_down(end);
         if start >= stop {
             return Ok(());
         }
@@ -82,7 +82,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
     /// or refcount metadata).
     async fn __discard_one_cluster(&self, guest_offset: u64) -> Qcow2Result<()> {
         let info = &self.info;
-        debug_assert_eq!(guest_offset & (info.cluster_size() as u64 - 1), 0);
+        debug_assert_eq!(info.in_cluster_offset(guest_offset), 0);
         let split = SplitGuestOffset(guest_offset);
 
         // Fast path: no L2 slice exists for this region; nothing to free.

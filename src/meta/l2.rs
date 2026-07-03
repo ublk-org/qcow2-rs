@@ -72,14 +72,8 @@ impl std::fmt::Display for Mapping {
             f,
             "Source: {:?} offset 0x{:<x} compressed_len {} copied {}",
             self.source,
-            match self.cluster_offset {
-                None => u64::MAX,
-                Some(o) => o,
-            },
-            match self.compressed_length {
-                None => usize::MIN,
-                Some(o) => o,
-            },
+            self.cluster_offset.unwrap_or(u64::MAX),
+            self.compressed_length.unwrap_or(0),
             self.copied,
         )
     }

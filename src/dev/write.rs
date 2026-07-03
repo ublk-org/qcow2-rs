@@ -27,12 +27,8 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         let old_offset = h.l1_table_offset();
 
         h.set_l1_table(l1_offset, l1_entries)?;
-        let buf = h.serialize_to_buf()?;
-        if let Err(err) = self.call_write(0, &buf).await {
-            h.set_l1_table(old_offset, old_entries).unwrap();
-            return Err(err);
-        }
-        Ok(())
+        self.commit_header(&mut h, |h| h.set_l1_table(old_offset, old_entries).unwrap())
+            .await
     }
 
     /// for fill up l1 entry
@@ -160,7 +156,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         buf: &[u8],
     ) -> Qcow2Result<()> {
         let info = &self.info;
-        let off_in_cls = (virt_off & (info.in_cluster_offset_mask as u64)) as usize;
+        let off_in_cls = info.in_cluster_offset(virt_off);
         let may_cow = cow_mapping.is_some();
 
         let host_off = match mapping.cluster_offset {
@@ -181,34 +177,33 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         let key = host_off >> info.cluster_bits();
 
         let mut discard = None;
-        let cluster_lock = if self.cluster_is_new(key).await {
+        let cluster_lock = {
             let cls_map = self.new_cluster.read().await;
             // keep this cluster locked, so that concurrent discard can
             // be avoided
 
-            if cls_map.contains_key(&key) {
-                let mut lock = cls_map.get(&key).unwrap().write().await;
+            match cls_map.get(&key) {
+                Some(cluster) => {
+                    let mut lock = cluster.write().await;
 
-                // don't handle discard any more if someone else has done
-                // that, otherwise mark this cluster is being handled.
-                //
-                // use this per-cluster lock for covering backign COW too,
-                // the whole cluster is copied to top image with this write
-                // lock covered, so any concurrent write has to be started
-                // after the copy is done
-                if !(*lock) {
-                    *lock = true;
+                    // don't handle discard any more if someone else has done
+                    // that, otherwise mark this cluster is being handled.
+                    //
+                    // use this per-cluster lock for covering backign COW too,
+                    // the whole cluster is copied to top image with this write
+                    // lock covered, so any concurrent write has to be started
+                    // after the copy is done
+                    if !(*lock) {
+                        *lock = true;
 
-                    discard = Some(self.call_fallocate(host_off, info.cluster_size(), 0));
-                    Some(lock)
-                } else {
-                    None
+                        discard = Some(self.call_fallocate(host_off, info.cluster_size(), 0));
+                        Some(lock)
+                    } else {
+                        None
+                    }
                 }
-            } else {
-                None
+                None => None,
             }
-        } else {
-            None
         };
 
         if let Some(lock) = cluster_lock {
@@ -315,10 +310,8 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
                 self.flush_refcount().await?;
 
                 // flush mapping table in-place update
-                let off = l2_table.get_offset().unwrap();
-                let buf =
-                    unsafe { std::slice::from_raw_parts(l2_table.as_ptr(), l2_table.byte_size()) };
-                self.call_write(off, buf).await?;
+                self.flush_table(&*l2_table, 0, l2_table.byte_size())
+                    .await?;
                 l2_handle.set_dirty(false);
 
                 // release l2 table, so that this new mapping can be flushed
@@ -335,9 +328,8 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
                     );
                     match l2_e.compressed_range(info.cluster_bits() as u32) {
                         Some((off, length)) => {
-                            let mask = (!info.in_cluster_offset_mask) as u64;
-                            let start = off & mask;
-                            let end = (off + (length as u64)) & mask;
+                            let start = info.cluster_round_down(off);
+                            let end = info.cluster_round_down(off + (length as u64));
 
                             let cnt = (((end - start) as usize) >> info.cluster_bits()) + 1;
                             self.free_clusters(start, cnt).await?
@@ -519,7 +511,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         end: u64,
     ) -> Qcow2Result<Vec<L2Entry>> {
         let info = &self.info;
-        let mut l2_entries = Vec::new();
+        let mut l2_entries = Vec::with_capacity(((end - start) as usize) >> info.cluster_bits());
         while start < end {
             // optimize in future by getting l2 entries at batch
             let entry = self.get_l2_entry(start).await?;
@@ -566,18 +558,15 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
         len: usize,
     ) -> Qcow2Result<Vec<L2Entry>> {
         let info = &self.info;
-        let cls_size = info.cluster_size() as u64;
-        let start = virt_off & !(cls_size - 1);
-        let end = (virt_off + (len as u64) + cls_size - 1) & !(cls_size - 1);
+        let start = info.cluster_round_down(virt_off);
+        let end = info.cluster_round_up(virt_off + len as u64);
 
-        let entries = self.make_multiple_write_mappings(start, end).await?;
-
-        Ok(entries)
+        self.make_multiple_write_mappings(start, end).await
     }
 
     async fn do_write(&self, l2_e: L2Entry, off: u64, buf: &[u8]) -> Qcow2Result<()> {
         let info = &self.info;
-        let split = SplitGuestOffset(off & !(info.in_cluster_offset_mask as u64));
+        let split = SplitGuestOffset(info.cluster_round_down(off));
         let mapping = l2_e.into_mapping(info, &split);
 
         log::trace!(
@@ -649,7 +638,7 @@ impl<T: Qcow2IoOps> Qcow2Dev<T> {
             let mut idx = 0;
             let l2_entries = self.populate_write_mappings(offset, len).await?;
             while len > 0 {
-                let in_cluster_offset = offset as usize & info.in_cluster_offset_mask;
+                let in_cluster_offset = info.in_cluster_offset(offset);
                 let curr_len = std::cmp::min(info.cluster_size() - in_cluster_offset, len);
                 let (iobuf, b) = remain.split_at(curr_len);
                 remain = b;
