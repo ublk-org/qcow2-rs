@@ -669,7 +669,7 @@ fn convert_to_qcow2(raw: &Path, qcow2: &Path) -> Qcow2Result<()> {
     Ok(())
 }
 
-fn __convert_qcow2(args: ConvertArgs) -> Qcow2Result<()> {
+fn convert_qcow2(args: ConvertArgs) -> Qcow2Result<()> {
     let in_fmt = &args.fmt;
     let out_fmt = &args.output_fmt;
 
@@ -686,10 +686,6 @@ fn __convert_qcow2(args: ConvertArgs) -> Qcow2Result<()> {
     }
 
     Ok(())
-}
-
-fn convert_qcow2(args: ConvertArgs) -> Qcow2Result<()> {
-    __convert_qcow2(args)
 }
 
 fn main() {
