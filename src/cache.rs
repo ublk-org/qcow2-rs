@@ -183,13 +183,9 @@ impl<K: Clone + PartialEq + Eq + Hash + std::fmt::Debug + std::cmp::PartialOrd, 
                 });
         }
 
-        if key_out.is_none() {
-            None
-        } else {
-            let key = key_out.take().unwrap();
-            let entry = map.remove(&key).unwrap();
-            Some((key.clone(), entry))
-        }
+        let key = key_out?;
+        let entry = map.remove(&key).unwrap();
+        Some((key, entry))
     }
 }
 
