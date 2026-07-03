@@ -66,7 +66,7 @@ impl Qcow2IoSync {
         } else {
             if (res as usize) != buf.len() {
                 eprintln!(
-                    "short write: ask for {}, read {}, offset {:x}",
+                    "short write: ask for {}, wrote {}, offset {:x}",
                     buf.len(),
                     res,
                     offset
