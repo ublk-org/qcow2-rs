@@ -42,12 +42,11 @@ impl<K: Clone + PartialEq + Eq + Hash + std::fmt::Debug + std::cmp::PartialOrd, 
         let mut w = self.wmap.lock().unwrap();
         let r = self.rmap.read().unwrap();
 
-        let entry = if !r.contains_key(&key) {
-            let entry = Arc::new(AsyncLruCacheEntryInner::new(f()));
-            w.entry(key.clone()).or_insert(entry);
-            w.get(&key).unwrap()
+        let entry = if let Some(entry) = r.get(&key) {
+            entry
         } else {
-            r.get(&key).unwrap()
+            w.entry(key.clone())
+                .or_insert_with(|| Arc::new(AsyncLruCacheEntryInner::new(f())))
         };
 
         Arc::clone(entry)
