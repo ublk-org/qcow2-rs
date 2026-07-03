@@ -96,14 +96,7 @@ impl Qcow2IoOps for Qcow2IoSync {
         self.write_at(offset, &crate::ops::zeroed_io_buf(len)).await
     }
 
-    #[cfg(not(target_os = "windows"))]
     async fn fsync(&self, _offset: u64, _len: usize, _flags: u32) -> Qcow2Result<()> {
         Ok(nix::unistd::fsync(self.fd)?)
-    }
-    #[cfg(target_os = "windows")]
-    async fn fsync(&self, _offset: u64, _len: usize, _flags: u32) -> Qcow2Result<()> {
-        let res = unsafe { libc::fsync(self.fd) };
-
-        Ok(res)
     }
 }
