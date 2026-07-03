@@ -365,13 +365,8 @@ impl Qcow2Header {
             extensions,
         };
 
-        // No need to clear autoclear features for read-only images, and it is caller's
-        // responsibility to clear the feature bit
-        /*
-        if header.raw.autoclear_features != 0 && !read_only {
-            header.raw.autoclear_features = 0;
-            header.write(queue).await?;
-        }*/
+        // Autoclear features are intentionally left untouched here: read-only images
+        // must not be modified, and clearing the feature bit is the caller's responsibility.
 
         if header.raw.incompatible_features != 0 {
             let feats = (0..64)
