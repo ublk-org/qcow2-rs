@@ -96,10 +96,10 @@ unsafe impl<T> Sync for Qcow2IoBuf<T> {}
 
 impl<T> Qcow2IoBuf<T> {
     pub fn new(size: usize) -> Self {
+        assert!(size != 0);
+
         let layout = std::alloc::Layout::from_size_align(size, 4096).unwrap();
         let ptr = unsafe { std::alloc::alloc(layout) } as *mut T;
-
-        assert!(size != 0);
 
         Qcow2IoBuf { ptr, size }
     }
