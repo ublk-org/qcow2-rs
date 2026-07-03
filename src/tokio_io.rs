@@ -23,7 +23,6 @@ pub struct Qcow2IoTokio {
 }
 
 impl Qcow2IoTokio {
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub async fn new(path: &Path, ro: bool, dio: bool) -> Qcow2IoTokio {
         let file = OpenOptions::new()
             .read(true)
@@ -34,26 +33,12 @@ impl Qcow2IoTokio {
 
         assert!(!dio);
 
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         let fd = file.as_raw_fd();
         Qcow2IoTokio {
             file: tokio::sync::Mutex::new(file),
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
             fd,
-        }
-    }
-
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-    pub async fn new(path: &Path, ro: bool, dio: bool) -> Qcow2IoTokio {
-        let file = OpenOptions::new()
-            .read(true)
-            .write(!ro)
-            .open(path.to_path_buf())
-            .await
-            .unwrap();
-
-        assert!(!dio);
-
-        Qcow2IoTokio {
-            file: tokio::sync::Mutex::new(file),
         }
     }
 
