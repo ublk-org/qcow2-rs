@@ -439,13 +439,12 @@ impl Qcow2Header {
             return Err("buffer is too small".into());
         }
 
-        let start = rc_table.0 as usize;
-        let end = start + ((rc_table.1 as usize) << cluster_bits);
-        let mut rc_t = RefTable::new_empty(Some(rc_table.0), end - start);
-
-        let start = rc_blk.0 as usize;
-        let end = start + ((rc_blk.1 as usize) << cluster_bits);
-        let mut ref_b = RefBlock::new(refcount_order, end - start, Some(rc_blk.0));
+        let mut rc_t = RefTable::new_empty(Some(rc_table.0), (rc_table.1 as usize) << cluster_bits);
+        let mut ref_b = RefBlock::new(
+            refcount_order,
+            (rc_blk.1 as usize) << cluster_bits,
+            Some(rc_blk.0),
+        );
 
         //header
         ref_b.increment(0)?;
