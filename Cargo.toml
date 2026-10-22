@@ -31,7 +31,7 @@ async-recursion = "1.0.5"
 miniz_oxide = { version = "0.8", features = ["std"] }
 futures = "0.3.31"
 log = {version = "0.4", features = ["release_max_level_off"]}
-env_logger = "0.9"
+env_logger = "0.11"
 rustversion = "1.0.14"
 tempfile = "3.6.0"
 
